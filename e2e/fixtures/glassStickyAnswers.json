@@ -1,0 +1,4902 @@
+{
+  "/auth/me": {
+    "id": "usr_YFavCB8P2t9RFmE3gmusMP",
+    "gumboId": null,
+    "displayName": "Admin",
+    "email": "admin@example.test",
+    "isAdmin": true,
+    "avatarUrl": null,
+    "onboarding": {
+      "step": "complete",
+      "completedAt": "2026-11-28T09:39:56.403Z"
+    },
+    "viaApiToken": false
+  },
+  "/me/account/age": {
+    "band": "adult",
+    "birthYear": null,
+    "birthMonth": null,
+    "isAdult": true,
+    "ageSource": "self",
+    "ageSetAt": "2026-11-28T09:49:51.177Z"
+  },
+  "/me/umpire-leagues": {
+    "leagues": [
+      {
+        "id": "lea_JlnGnAsS__HHKzr6",
+        "name": "Packed League 9f63b767",
+        "logoUrl": null
+      }
+    ]
+  },
+  "/me/notifications/summary": { "hasPending": false },
+  "/health": {
+    "status": "ok",
+    "version": "1.1.0",
+    "database": "ok",
+    "apiRateLimits": {
+      "mode": "observe",
+      "readiness": "ready",
+      "degradedMs": 0
+    },
+    "migrations": 151,
+    "uptimeSec": 10210,
+    "pid": 97346,
+    "dictation": false,
+    "dictationModels": [],
+    "narration": false,
+    "tess": false,
+    "replayPitchSec": 5
+  },
+  "/chat/blocks": [],
+  "/invites": { "canInvite": true, "invites": [] },
+  "/seasons/sea_rt_zGYyzvtqY38fF": {
+    "group": {
+      "id": "sea_rt_zGYyzvtqY38fF",
+      "kind": "season",
+      "name": "S3",
+      "parentNames": ["Packed League 9f63b767"],
+      "imageUrl": null,
+      "locality": null,
+      "startsOn": "2027-03-01",
+      "endsOn": "2027-05-31",
+      "timezone": "America/Los_Angeles",
+      "external": false,
+      "leagueId": "lea_JlnGnAsS__HHKzr6",
+      "leaguePictureUrl": null
+    },
+    "canViewPrivate": true,
+    "nonMemberView": false,
+    "parents": [
+      {
+        "id": "lea_JlnGnAsS__HHKzr6",
+        "kind": "league",
+        "name": "Packed League 9f63b767",
+        "parentNames": [],
+        "imageUrl": null,
+        "locality": null,
+        "startsOn": null,
+        "endsOn": null,
+        "timezone": "UTC",
+        "external": false,
+        "leagueId": null,
+        "leaguePictureUrl": null
+      }
+    ],
+    "children": [],
+    "participatingSeasons": [],
+    "competingTeams": [
+      {
+        "id": "tem_M02aUEacftkRpAXe",
+        "kind": "team",
+        "name": "S3 Team 1 9f63b767",
+        "parentNames": [],
+        "imageUrl": null,
+        "locality": null,
+        "startsOn": null,
+        "endsOn": null,
+        "timezone": "UTC",
+        "external": false,
+        "leagueId": null,
+        "leaguePictureUrl": null
+      },
+      {
+        "id": "tem_cD1GmIh-f-QURDMi",
+        "kind": "team",
+        "name": "S3 Team 10 9f63b767",
+        "parentNames": [],
+        "imageUrl": null,
+        "locality": null,
+        "startsOn": null,
+        "endsOn": null,
+        "timezone": "UTC",
+        "external": false,
+        "leagueId": null,
+        "leaguePictureUrl": null
+      },
+      {
+        "id": "tem_xNBkhShBP6MjG_je",
+        "kind": "team",
+        "name": "S3 Team 2 9f63b767",
+        "parentNames": [],
+        "imageUrl": null,
+        "locality": null,
+        "startsOn": null,
+        "endsOn": null,
+        "timezone": "UTC",
+        "external": false,
+        "leagueId": null,
+        "leaguePictureUrl": null
+      },
+      {
+        "id": "tem_X-aP95Yx3c3FRarp",
+        "kind": "team",
+        "name": "S3 Team 3 9f63b767",
+        "parentNames": [],
+        "imageUrl": null,
+        "locality": null,
+        "startsOn": null,
+        "endsOn": null,
+        "timezone": "UTC",
+        "external": false,
+        "leagueId": null,
+        "leaguePictureUrl": null
+      },
+      {
+        "id": "tem_rPCiN518PKXsf_TB",
+        "kind": "team",
+        "name": "S3 Team 4 9f63b767",
+        "parentNames": [],
+        "imageUrl": null,
+        "locality": null,
+        "startsOn": null,
+        "endsOn": null,
+        "timezone": "UTC",
+        "external": false,
+        "leagueId": null,
+        "leaguePictureUrl": null
+      },
+      {
+        "id": "tem_RYZODz9Zgooykdz5",
+        "kind": "team",
+        "name": "S3 Team 5 9f63b767",
+        "parentNames": [],
+        "imageUrl": null,
+        "locality": null,
+        "startsOn": null,
+        "endsOn": null,
+        "timezone": "UTC",
+        "external": false,
+        "leagueId": null,
+        "leaguePictureUrl": null
+      },
+      {
+        "id": "tem_L496GRsQMxodY1Zx",
+        "kind": "team",
+        "name": "S3 Team 6 9f63b767",
+        "parentNames": [],
+        "imageUrl": null,
+        "locality": null,
+        "startsOn": null,
+        "endsOn": null,
+        "timezone": "UTC",
+        "external": false,
+        "leagueId": null,
+        "leaguePictureUrl": null
+      },
+      {
+        "id": "tem_Pl7Q1llyQOMZ2xc1",
+        "kind": "team",
+        "name": "S3 Team 7 9f63b767",
+        "parentNames": [],
+        "imageUrl": null,
+        "locality": null,
+        "startsOn": null,
+        "endsOn": null,
+        "timezone": "UTC",
+        "external": false,
+        "leagueId": null,
+        "leaguePictureUrl": null
+      },
+      {
+        "id": "tem_Pj9yp6msEhAJIh8a",
+        "kind": "team",
+        "name": "S3 Team 8 9f63b767",
+        "parentNames": [],
+        "imageUrl": null,
+        "locality": null,
+        "startsOn": null,
+        "endsOn": null,
+        "timezone": "UTC",
+        "external": false,
+        "leagueId": null,
+        "leaguePictureUrl": null
+      },
+      {
+        "id": "tem_e4ZtL_YXjFLFRAcv",
+        "kind": "team",
+        "name": "S3 Team 9 9f63b767",
+        "parentNames": [],
+        "imageUrl": null,
+        "locality": null,
+        "startsOn": null,
+        "endsOn": null,
+        "timezone": "UTC",
+        "external": false,
+        "leagueId": null,
+        "leaguePictureUrl": null
+      }
+    ],
+    "keptTeams": [],
+    "teamSeasons": [],
+    "staff": [],
+    "custodian": null,
+    "games": [
+      {
+        "id": "gam_egcXONumG-LvEaoU",
+        "isUmpire": false,
+        "videoCount": 0,
+        "homeTeam": {
+          "id": "tem_rPCiN518PKXsf_TB",
+          "name": "S3 Team 4 9f63b767"
+        },
+        "awayTeam": {
+          "id": "tem_xNBkhShBP6MjG_je",
+          "name": "S3 Team 2 9f63b767"
+        },
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-02-27T16:30:00.000Z",
+        "endAt": "2027-02-27T18:00:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "venue": "Packed Park 9f63b767",
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null
+      },
+      {
+        "id": "gam_DzzMM4TcyJLHz3_M",
+        "isUmpire": false,
+        "videoCount": 0,
+        "homeTeam": {
+          "id": "tem_M02aUEacftkRpAXe",
+          "name": "S3 Team 1 9f63b767"
+        },
+        "awayTeam": {
+          "id": "tem_Pl7Q1llyQOMZ2xc1",
+          "name": "S3 Team 7 9f63b767"
+        },
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-02-27T18:30:00.000Z",
+        "endAt": "2027-02-27T20:00:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "venue": "Packed Park 9f63b767",
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null
+      },
+      {
+        "id": "gam_wjboD-zsyool17DP",
+        "isUmpire": false,
+        "videoCount": 0,
+        "homeTeam": {
+          "id": "tem_X-aP95Yx3c3FRarp",
+          "name": "S3 Team 3 9f63b767"
+        },
+        "awayTeam": {
+          "id": "tem_Pj9yp6msEhAJIh8a",
+          "name": "S3 Team 8 9f63b767"
+        },
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-02-27T21:15:00.000Z",
+        "endAt": "2027-02-27T22:45:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "venue": "Packed Park 9f63b767",
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null
+      },
+      {
+        "id": "gam_hnC6S6lKVXRlL5eJ",
+        "isUmpire": false,
+        "videoCount": 0,
+        "homeTeam": {
+          "id": "tem_e4ZtL_YXjFLFRAcv",
+          "name": "S3 Team 9 9f63b767"
+        },
+        "awayTeam": {
+          "id": "tem_RYZODz9Zgooykdz5",
+          "name": "S3 Team 5 9f63b767"
+        },
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-02-27T23:15:00.000Z",
+        "endAt": "2027-02-28T00:45:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "venue": "Packed Park 9f63b767",
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null
+      },
+      {
+        "id": "gam_N_a0duiywxe0X-eK",
+        "isUmpire": false,
+        "videoCount": 0,
+        "homeTeam": {
+          "id": "tem_cD1GmIh-f-QURDMi",
+          "name": "S3 Team 10 9f63b767"
+        },
+        "awayTeam": {
+          "id": "tem_xNBkhShBP6MjG_je",
+          "name": "S3 Team 2 9f63b767"
+        },
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-03-06T16:30:00.000Z",
+        "endAt": "2027-03-06T18:00:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "venue": "Packed Park 9f63b767",
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null
+      },
+      {
+        "id": "gam_trnwNUtnxEDQRHS6",
+        "isUmpire": false,
+        "videoCount": 0,
+        "homeTeam": {
+          "id": "tem_X-aP95Yx3c3FRarp",
+          "name": "S3 Team 3 9f63b767"
+        },
+        "awayTeam": {
+          "id": "tem_L496GRsQMxodY1Zx",
+          "name": "S3 Team 6 9f63b767"
+        },
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-03-06T18:30:00.000Z",
+        "endAt": "2027-03-06T20:00:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "venue": "Packed Park 9f63b767",
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null
+      },
+      {
+        "id": "gam_YGK9LyAcnJ5JN6Do",
+        "isUmpire": false,
+        "videoCount": 0,
+        "homeTeam": {
+          "id": "tem_Pl7Q1llyQOMZ2xc1",
+          "name": "S3 Team 7 9f63b767"
+        },
+        "awayTeam": {
+          "id": "tem_e4ZtL_YXjFLFRAcv",
+          "name": "S3 Team 9 9f63b767"
+        },
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-03-06T21:15:00.000Z",
+        "endAt": "2027-03-06T22:45:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "venue": "Packed Park 9f63b767",
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null
+      },
+      {
+        "id": "gam_GvJ8VcaaGcbz4Lmn",
+        "isUmpire": false,
+        "videoCount": 0,
+        "homeTeam": {
+          "id": "tem_RYZODz9Zgooykdz5",
+          "name": "S3 Team 5 9f63b767"
+        },
+        "awayTeam": {
+          "id": "tem_Pj9yp6msEhAJIh8a",
+          "name": "S3 Team 8 9f63b767"
+        },
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-03-06T23:15:00.000Z",
+        "endAt": "2027-03-07T00:45:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "venue": "Packed Park 9f63b767",
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null
+      },
+      {
+        "id": "gam_8Q2fpDXQeilarYjh",
+        "isUmpire": false,
+        "videoCount": 0,
+        "homeTeam": {
+          "id": "tem_Pl7Q1llyQOMZ2xc1",
+          "name": "S3 Team 7 9f63b767"
+        },
+        "awayTeam": {
+          "id": "tem_Pj9yp6msEhAJIh8a",
+          "name": "S3 Team 8 9f63b767"
+        },
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-03-13T16:30:00.000Z",
+        "endAt": "2027-03-13T18:00:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "venue": "Packed Park 9f63b767",
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null
+      },
+      {
+        "id": "gam_lQp0L4nS2GGnwtII",
+        "isUmpire": false,
+        "videoCount": 0,
+        "homeTeam": {
+          "id": "tem_xNBkhShBP6MjG_je",
+          "name": "S3 Team 2 9f63b767"
+        },
+        "awayTeam": {
+          "id": "tem_cD1GmIh-f-QURDMi",
+          "name": "S3 Team 10 9f63b767"
+        },
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-03-13T18:30:00.000Z",
+        "endAt": "2027-03-13T20:00:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "venue": "Packed Park 9f63b767",
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null
+      },
+      {
+        "id": "gam_tkcXNv9ayRm6UdRN",
+        "isUmpire": false,
+        "videoCount": 0,
+        "homeTeam": {
+          "id": "tem_rPCiN518PKXsf_TB",
+          "name": "S3 Team 4 9f63b767"
+        },
+        "awayTeam": {
+          "id": "tem_M02aUEacftkRpAXe",
+          "name": "S3 Team 1 9f63b767"
+        },
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-03-13T20:30:00.000Z",
+        "endAt": "2027-03-13T22:00:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "venue": "Packed Park 9f63b767",
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null
+      },
+      {
+        "id": "gam_2Tm0L24-TZ92WS_s",
+        "isUmpire": false,
+        "videoCount": 0,
+        "homeTeam": {
+          "id": "tem_L496GRsQMxodY1Zx",
+          "name": "S3 Team 6 9f63b767"
+        },
+        "awayTeam": {
+          "id": "tem_X-aP95Yx3c3FRarp",
+          "name": "S3 Team 3 9f63b767"
+        },
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-03-13T23:45:00.000Z",
+        "endAt": "2027-03-14T01:15:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "venue": "Packed Park 9f63b767",
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null
+      },
+      {
+        "id": "gam_7Yw4ylwv4indtLBC",
+        "isUmpire": false,
+        "videoCount": 0,
+        "homeTeam": {
+          "id": "tem_RYZODz9Zgooykdz5",
+          "name": "S3 Team 5 9f63b767"
+        },
+        "awayTeam": {
+          "id": "tem_e4ZtL_YXjFLFRAcv",
+          "name": "S3 Team 9 9f63b767"
+        },
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-03-15T23:45:00.000Z",
+        "endAt": "2027-03-16T01:15:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "venue": "Packed Park 9f63b767",
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null
+      },
+      {
+        "id": "gam_tQhVNHn5Yir3uJSn",
+        "isUmpire": false,
+        "videoCount": 0,
+        "homeTeam": {
+          "id": "tem_M02aUEacftkRpAXe",
+          "name": "S3 Team 1 9f63b767"
+        },
+        "awayTeam": {
+          "id": "tem_xNBkhShBP6MjG_je",
+          "name": "S3 Team 2 9f63b767"
+        },
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-03-17T23:45:00.000Z",
+        "endAt": "2027-03-18T01:15:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "venue": "Packed Park 9f63b767",
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null
+      },
+      {
+        "id": "gam_--i5oiNzz7D2Muzj",
+        "isUmpire": false,
+        "videoCount": 0,
+        "homeTeam": {
+          "id": "tem_Pl7Q1llyQOMZ2xc1",
+          "name": "S3 Team 7 9f63b767"
+        },
+        "awayTeam": {
+          "id": "tem_RYZODz9Zgooykdz5",
+          "name": "S3 Team 5 9f63b767"
+        },
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-03-20T15:30:00.000Z",
+        "endAt": "2027-03-20T17:00:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "venue": "Packed Park 9f63b767",
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null
+      },
+      {
+        "id": "gam_4UJUxKDBIaLLGzps",
+        "isUmpire": false,
+        "videoCount": 0,
+        "homeTeam": {
+          "id": "tem_Pj9yp6msEhAJIh8a",
+          "name": "S3 Team 8 9f63b767"
+        },
+        "awayTeam": {
+          "id": "tem_cD1GmIh-f-QURDMi",
+          "name": "S3 Team 10 9f63b767"
+        },
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-03-20T19:00:00.000Z",
+        "endAt": "2027-03-20T20:30:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "venue": "Packed Park 9f63b767",
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null
+      },
+      {
+        "id": "gam_FhNDjYgtPuBkycoN",
+        "isUmpire": false,
+        "videoCount": 0,
+        "homeTeam": {
+          "id": "tem_X-aP95Yx3c3FRarp",
+          "name": "S3 Team 3 9f63b767"
+        },
+        "awayTeam": {
+          "id": "tem_M02aUEacftkRpAXe",
+          "name": "S3 Team 1 9f63b767"
+        },
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-03-20T21:30:00.000Z",
+        "endAt": "2027-03-20T23:00:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "venue": "Packed Park 9f63b767",
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null
+      },
+      {
+        "id": "gam_rMCmLQ4lwBjlg4JX",
+        "isUmpire": false,
+        "videoCount": 0,
+        "homeTeam": {
+          "id": "tem_e4ZtL_YXjFLFRAcv",
+          "name": "S3 Team 9 9f63b767"
+        },
+        "awayTeam": {
+          "id": "tem_rPCiN518PKXsf_TB",
+          "name": "S3 Team 4 9f63b767"
+        },
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-03-20T23:30:00.000Z",
+        "endAt": "2027-03-21T01:00:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "venue": "Packed Park 9f63b767",
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null
+      },
+      {
+        "id": "gam_WoMztz1HT4Drc-ju",
+        "isUmpire": false,
+        "videoCount": 0,
+        "homeTeam": {
+          "id": "tem_Pj9yp6msEhAJIh8a",
+          "name": "S3 Team 8 9f63b767"
+        },
+        "awayTeam": {
+          "id": "tem_e4ZtL_YXjFLFRAcv",
+          "name": "S3 Team 9 9f63b767"
+        },
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-03-22T23:45:00.000Z",
+        "endAt": "2027-03-23T01:15:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "venue": "Packed Park 9f63b767",
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null
+      },
+      {
+        "id": "gam_2xmtsc_NTB4oQ6IX",
+        "isUmpire": false,
+        "videoCount": 0,
+        "homeTeam": {
+          "id": "tem_Pl7Q1llyQOMZ2xc1",
+          "name": "S3 Team 7 9f63b767"
+        },
+        "awayTeam": {
+          "id": "tem_X-aP95Yx3c3FRarp",
+          "name": "S3 Team 3 9f63b767"
+        },
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-03-24T23:45:00.000Z",
+        "endAt": "2027-03-25T01:15:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "venue": "Packed Park 9f63b767",
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null
+      },
+      {
+        "id": "gam_ElXPljAO936h2iWz",
+        "isUmpire": false,
+        "videoCount": 0,
+        "homeTeam": {
+          "id": "tem_RYZODz9Zgooykdz5",
+          "name": "S3 Team 5 9f63b767"
+        },
+        "awayTeam": {
+          "id": "tem_cD1GmIh-f-QURDMi",
+          "name": "S3 Team 10 9f63b767"
+        },
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-04-03T15:30:00.000Z",
+        "endAt": "2027-04-03T17:00:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "venue": "Packed Park 9f63b767",
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null
+      },
+      {
+        "id": "gam_QT_PLJml9QLQyVda",
+        "isUmpire": false,
+        "videoCount": 0,
+        "homeTeam": {
+          "id": "tem_e4ZtL_YXjFLFRAcv",
+          "name": "S3 Team 9 9f63b767"
+        },
+        "awayTeam": {
+          "id": "tem_X-aP95Yx3c3FRarp",
+          "name": "S3 Team 3 9f63b767"
+        },
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-04-03T17:30:00.000Z",
+        "endAt": "2027-04-03T19:00:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "venue": "Packed Park 9f63b767",
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null
+      },
+      {
+        "id": "gam_G3HZ9gjiW84-q_DA",
+        "isUmpire": false,
+        "videoCount": 0,
+        "homeTeam": {
+          "id": "tem_M02aUEacftkRpAXe",
+          "name": "S3 Team 1 9f63b767"
+        },
+        "awayTeam": {
+          "id": "tem_L496GRsQMxodY1Zx",
+          "name": "S3 Team 6 9f63b767"
+        },
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-04-03T19:30:00.000Z",
+        "endAt": "2027-04-03T21:00:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "venue": "Packed Park 9f63b767",
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null
+      },
+      {
+        "id": "gam_P3U8yREF6XFaVePv",
+        "isUmpire": false,
+        "videoCount": 0,
+        "homeTeam": {
+          "id": "tem_Pj9yp6msEhAJIh8a",
+          "name": "S3 Team 8 9f63b767"
+        },
+        "awayTeam": {
+          "id": "tem_xNBkhShBP6MjG_je",
+          "name": "S3 Team 2 9f63b767"
+        },
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-04-03T21:30:00.000Z",
+        "endAt": "2027-04-03T23:00:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "venue": "Packed Park 9f63b767",
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null
+      }
+    ],
+    "playerNamePrivacy": null,
+    "playerNamePrivacyFormat": "firstLastInitial",
+    "playerNamePrivacyInheritedFrom": [],
+    "playingTimeRules": null,
+    "canManage": true,
+    "canManagePeople": true,
+    "canSeePeople": true,
+    "canManageRoster": false
+  },
+  "/sponsor-rows": [],
+  "/seasons/sea_rt_zGYyzvtqY38fF/teams": [
+    {
+      "id": "tem_M02aUEacftkRpAXe",
+      "name": "S3 Team 1 9f63b767",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": null,
+      "exhibition": false,
+      "seasonCategory": "inSeason",
+      "canViewPrivate": true,
+      "logoUrl": null,
+      "record": null
+    },
+    {
+      "id": "tem_cD1GmIh-f-QURDMi",
+      "name": "S3 Team 10 9f63b767",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": null,
+      "exhibition": false,
+      "seasonCategory": "inSeason",
+      "canViewPrivate": true,
+      "logoUrl": null,
+      "record": null
+    },
+    {
+      "id": "tem_xNBkhShBP6MjG_je",
+      "name": "S3 Team 2 9f63b767",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": null,
+      "exhibition": false,
+      "seasonCategory": "inSeason",
+      "canViewPrivate": true,
+      "logoUrl": null,
+      "record": null
+    },
+    {
+      "id": "tem_X-aP95Yx3c3FRarp",
+      "name": "S3 Team 3 9f63b767",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": null,
+      "exhibition": false,
+      "seasonCategory": "inSeason",
+      "canViewPrivate": true,
+      "logoUrl": null,
+      "record": null
+    },
+    {
+      "id": "tem_rPCiN518PKXsf_TB",
+      "name": "S3 Team 4 9f63b767",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": null,
+      "exhibition": false,
+      "seasonCategory": "inSeason",
+      "canViewPrivate": true,
+      "logoUrl": null,
+      "record": null
+    },
+    {
+      "id": "tem_RYZODz9Zgooykdz5",
+      "name": "S3 Team 5 9f63b767",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": null,
+      "exhibition": false,
+      "seasonCategory": "inSeason",
+      "canViewPrivate": true,
+      "logoUrl": null,
+      "record": null
+    },
+    {
+      "id": "tem_L496GRsQMxodY1Zx",
+      "name": "S3 Team 6 9f63b767",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": null,
+      "exhibition": false,
+      "seasonCategory": "inSeason",
+      "canViewPrivate": true,
+      "logoUrl": null,
+      "record": null
+    },
+    {
+      "id": "tem_Pl7Q1llyQOMZ2xc1",
+      "name": "S3 Team 7 9f63b767",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": null,
+      "exhibition": false,
+      "seasonCategory": "inSeason",
+      "canViewPrivate": true,
+      "logoUrl": null,
+      "record": null
+    },
+    {
+      "id": "tem_Pj9yp6msEhAJIh8a",
+      "name": "S3 Team 8 9f63b767",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": null,
+      "exhibition": false,
+      "seasonCategory": "inSeason",
+      "canViewPrivate": true,
+      "logoUrl": null,
+      "record": null
+    },
+    {
+      "id": "tem_e4ZtL_YXjFLFRAcv",
+      "name": "S3 Team 9 9f63b767",
+      "kind": "full",
+      "logoPath": null,
+      "shortName": null,
+      "exhibition": false,
+      "seasonCategory": "inSeason",
+      "canViewPrivate": true,
+      "logoUrl": null,
+      "record": null
+    }
+  ],
+  "/seasons/sea_rt_zGYyzvtqY38fF/standings": [
+    {
+      "teamId": "tem_M02aUEacftkRpAXe",
+      "teamName": "S3 Team 1 9f63b767",
+      "teamKind": "full",
+      "w": 0,
+      "l": 0,
+      "t": 0,
+      "runsFor": 0,
+      "runsAgainst": 0,
+      "played": 0,
+      "winningPct": null,
+      "runDifferential": 0,
+      "gamesBehind": null,
+      "streak": null,
+      "home": { "w": 0, "l": 0, "t": 0 },
+      "away": { "w": 0, "l": 0, "t": 0 },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_cD1GmIh-f-QURDMi",
+      "teamName": "S3 Team 10 9f63b767",
+      "teamKind": "full",
+      "w": 0,
+      "l": 0,
+      "t": 0,
+      "runsFor": 0,
+      "runsAgainst": 0,
+      "played": 0,
+      "winningPct": null,
+      "runDifferential": 0,
+      "gamesBehind": null,
+      "streak": null,
+      "home": { "w": 0, "l": 0, "t": 0 },
+      "away": { "w": 0, "l": 0, "t": 0 },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_xNBkhShBP6MjG_je",
+      "teamName": "S3 Team 2 9f63b767",
+      "teamKind": "full",
+      "w": 0,
+      "l": 0,
+      "t": 0,
+      "runsFor": 0,
+      "runsAgainst": 0,
+      "played": 0,
+      "winningPct": null,
+      "runDifferential": 0,
+      "gamesBehind": null,
+      "streak": null,
+      "home": { "w": 0, "l": 0, "t": 0 },
+      "away": { "w": 0, "l": 0, "t": 0 },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_X-aP95Yx3c3FRarp",
+      "teamName": "S3 Team 3 9f63b767",
+      "teamKind": "full",
+      "w": 0,
+      "l": 0,
+      "t": 0,
+      "runsFor": 0,
+      "runsAgainst": 0,
+      "played": 0,
+      "winningPct": null,
+      "runDifferential": 0,
+      "gamesBehind": null,
+      "streak": null,
+      "home": { "w": 0, "l": 0, "t": 0 },
+      "away": { "w": 0, "l": 0, "t": 0 },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_rPCiN518PKXsf_TB",
+      "teamName": "S3 Team 4 9f63b767",
+      "teamKind": "full",
+      "w": 0,
+      "l": 0,
+      "t": 0,
+      "runsFor": 0,
+      "runsAgainst": 0,
+      "played": 0,
+      "winningPct": null,
+      "runDifferential": 0,
+      "gamesBehind": null,
+      "streak": null,
+      "home": { "w": 0, "l": 0, "t": 0 },
+      "away": { "w": 0, "l": 0, "t": 0 },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_RYZODz9Zgooykdz5",
+      "teamName": "S3 Team 5 9f63b767",
+      "teamKind": "full",
+      "w": 0,
+      "l": 0,
+      "t": 0,
+      "runsFor": 0,
+      "runsAgainst": 0,
+      "played": 0,
+      "winningPct": null,
+      "runDifferential": 0,
+      "gamesBehind": null,
+      "streak": null,
+      "home": { "w": 0, "l": 0, "t": 0 },
+      "away": { "w": 0, "l": 0, "t": 0 },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_L496GRsQMxodY1Zx",
+      "teamName": "S3 Team 6 9f63b767",
+      "teamKind": "full",
+      "w": 0,
+      "l": 0,
+      "t": 0,
+      "runsFor": 0,
+      "runsAgainst": 0,
+      "played": 0,
+      "winningPct": null,
+      "runDifferential": 0,
+      "gamesBehind": null,
+      "streak": null,
+      "home": { "w": 0, "l": 0, "t": 0 },
+      "away": { "w": 0, "l": 0, "t": 0 },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_Pl7Q1llyQOMZ2xc1",
+      "teamName": "S3 Team 7 9f63b767",
+      "teamKind": "full",
+      "w": 0,
+      "l": 0,
+      "t": 0,
+      "runsFor": 0,
+      "runsAgainst": 0,
+      "played": 0,
+      "winningPct": null,
+      "runDifferential": 0,
+      "gamesBehind": null,
+      "streak": null,
+      "home": { "w": 0, "l": 0, "t": 0 },
+      "away": { "w": 0, "l": 0, "t": 0 },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_Pj9yp6msEhAJIh8a",
+      "teamName": "S3 Team 8 9f63b767",
+      "teamKind": "full",
+      "w": 0,
+      "l": 0,
+      "t": 0,
+      "runsFor": 0,
+      "runsAgainst": 0,
+      "played": 0,
+      "winningPct": null,
+      "runDifferential": 0,
+      "gamesBehind": null,
+      "streak": null,
+      "home": { "w": 0, "l": 0, "t": 0 },
+      "away": { "w": 0, "l": 0, "t": 0 },
+      "logoUrl": null
+    },
+    {
+      "teamId": "tem_e4ZtL_YXjFLFRAcv",
+      "teamName": "S3 Team 9 9f63b767",
+      "teamKind": "full",
+      "w": 0,
+      "l": 0,
+      "t": 0,
+      "runsFor": 0,
+      "runsAgainst": 0,
+      "played": 0,
+      "winningPct": null,
+      "runDifferential": 0,
+      "gamesBehind": null,
+      "streak": null,
+      "home": { "w": 0, "l": 0, "t": 0 },
+      "away": { "w": 0, "l": 0, "t": 0 },
+      "logoUrl": null
+    }
+  ],
+  "/chat/links": [],
+  "/events": {
+    "items": [
+      {
+        "id": "gam_J7E5rr6VMUxrb7Ge",
+        "isUmpire": false,
+        "homeTeamId": "tem_L496GRsQMxodY1Zx",
+        "awayTeamId": "tem_cD1GmIh-f-QURDMi",
+        "homeTeamName": "S3 Team 6 9f63b767",
+        "awayTeamName": "S3 Team 10 9f63b767",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-05-08T23:30:00.000Z",
+        "venue": "Packed Park 9f63b767",
+        "endAt": "2027-05-09T01:00:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "address": "1 Packed Park Way",
+        "notes": null,
+        "arrivalTimeDelta": null,
+        "eventType": "game",
+        "latitude": 32.7,
+        "longitude": -117.1,
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "ingestStatus": "none",
+        "videoCount": 0,
+        "durationSec": null,
+        "posterUrl": null,
+        "isLive": false,
+        "externalIds": [],
+        "gameId": "gam_J7E5rr6VMUxrb7Ge",
+        "homeLogoUrl": null,
+        "awayLogoUrl": null,
+        "liveState": "none",
+        "opponentFixed": true
+      },
+      {
+        "id": "gam_b4V9KDKHKSLOLUo0",
+        "isUmpire": false,
+        "homeTeamId": "tem_Pl7Q1llyQOMZ2xc1",
+        "awayTeamId": "tem_xNBkhShBP6MjG_je",
+        "homeTeamName": "S3 Team 7 9f63b767",
+        "awayTeamName": "S3 Team 2 9f63b767",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-05-08T21:30:00.000Z",
+        "venue": "Packed Park 9f63b767",
+        "endAt": "2027-05-08T23:00:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "address": "1 Packed Park Way",
+        "notes": null,
+        "arrivalTimeDelta": null,
+        "eventType": "game",
+        "latitude": 32.7,
+        "longitude": -117.1,
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "ingestStatus": "none",
+        "videoCount": 0,
+        "durationSec": null,
+        "posterUrl": null,
+        "isLive": false,
+        "externalIds": [],
+        "gameId": "gam_b4V9KDKHKSLOLUo0",
+        "homeLogoUrl": null,
+        "awayLogoUrl": null,
+        "liveState": "none",
+        "opponentFixed": true
+      },
+      {
+        "id": "gam_HmdCTFh3thV2uzjH",
+        "isUmpire": false,
+        "homeTeamId": "tem_e4ZtL_YXjFLFRAcv",
+        "awayTeamId": "tem_X-aP95Yx3c3FRarp",
+        "homeTeamName": "S3 Team 9 9f63b767",
+        "awayTeamName": "S3 Team 3 9f63b767",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-05-08T19:30:00.000Z",
+        "venue": "Packed Park 9f63b767",
+        "endAt": "2027-05-08T21:00:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "address": "1 Packed Park Way",
+        "notes": null,
+        "arrivalTimeDelta": null,
+        "eventType": "game",
+        "latitude": 32.7,
+        "longitude": -117.1,
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "ingestStatus": "none",
+        "videoCount": 0,
+        "durationSec": null,
+        "posterUrl": null,
+        "isLive": false,
+        "externalIds": [],
+        "gameId": "gam_HmdCTFh3thV2uzjH",
+        "homeLogoUrl": null,
+        "awayLogoUrl": null,
+        "liveState": "none",
+        "opponentFixed": true
+      },
+      {
+        "id": "gam_8jQfN6HLVo-h6o7r",
+        "isUmpire": false,
+        "homeTeamId": "tem_M02aUEacftkRpAXe",
+        "awayTeamId": "tem_RYZODz9Zgooykdz5",
+        "homeTeamName": "S3 Team 1 9f63b767",
+        "awayTeamName": "S3 Team 5 9f63b767",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-05-08T17:30:00.000Z",
+        "venue": "Packed Park 9f63b767",
+        "endAt": "2027-05-08T19:00:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "address": "1 Packed Park Way",
+        "notes": null,
+        "arrivalTimeDelta": null,
+        "eventType": "game",
+        "latitude": 32.7,
+        "longitude": -117.1,
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "ingestStatus": "none",
+        "videoCount": 0,
+        "durationSec": null,
+        "posterUrl": null,
+        "isLive": false,
+        "externalIds": [],
+        "gameId": "gam_8jQfN6HLVo-h6o7r",
+        "homeLogoUrl": null,
+        "awayLogoUrl": null,
+        "liveState": "none",
+        "opponentFixed": true
+      },
+      {
+        "id": "gam_Ptws38hzblWEKA-2",
+        "isUmpire": false,
+        "homeTeamId": "tem_rPCiN518PKXsf_TB",
+        "awayTeamId": "tem_Pj9yp6msEhAJIh8a",
+        "homeTeamName": "S3 Team 4 9f63b767",
+        "awayTeamName": "S3 Team 8 9f63b767",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-05-08T15:30:00.000Z",
+        "venue": "Packed Park 9f63b767",
+        "endAt": "2027-05-08T17:00:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "address": "1 Packed Park Way",
+        "notes": null,
+        "arrivalTimeDelta": null,
+        "eventType": "game",
+        "latitude": 32.7,
+        "longitude": -117.1,
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "ingestStatus": "none",
+        "videoCount": 0,
+        "durationSec": null,
+        "posterUrl": null,
+        "isLive": false,
+        "externalIds": [],
+        "gameId": "gam_Ptws38hzblWEKA-2",
+        "homeLogoUrl": null,
+        "awayLogoUrl": null,
+        "liveState": "none",
+        "opponentFixed": true
+      },
+      {
+        "id": "gam_UwCIljGNQmrep778",
+        "isUmpire": false,
+        "homeTeamId": "tem_L496GRsQMxodY1Zx",
+        "awayTeamId": "tem_rPCiN518PKXsf_TB",
+        "homeTeamName": "S3 Team 6 9f63b767",
+        "awayTeamName": "S3 Team 4 9f63b767",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-05-05T23:45:00.000Z",
+        "venue": "Packed Park 9f63b767",
+        "endAt": "2027-05-06T01:15:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "address": "1 Packed Park Way",
+        "notes": null,
+        "arrivalTimeDelta": null,
+        "eventType": "game",
+        "latitude": 32.7,
+        "longitude": -117.1,
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "ingestStatus": "none",
+        "videoCount": 0,
+        "durationSec": null,
+        "posterUrl": null,
+        "isLive": false,
+        "externalIds": [],
+        "gameId": "gam_UwCIljGNQmrep778",
+        "homeLogoUrl": null,
+        "awayLogoUrl": null,
+        "liveState": "none",
+        "opponentFixed": true
+      },
+      {
+        "id": "gam_jBVcMe1oYvtZ2aid",
+        "isUmpire": false,
+        "homeTeamId": "tem_xNBkhShBP6MjG_je",
+        "awayTeamId": "tem_X-aP95Yx3c3FRarp",
+        "homeTeamName": "S3 Team 2 9f63b767",
+        "awayTeamName": "S3 Team 3 9f63b767",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-05-03T23:45:00.000Z",
+        "venue": "Packed Park 9f63b767",
+        "endAt": "2027-05-04T01:15:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "address": "1 Packed Park Way",
+        "notes": null,
+        "arrivalTimeDelta": null,
+        "eventType": "game",
+        "latitude": 32.7,
+        "longitude": -117.1,
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "ingestStatus": "none",
+        "videoCount": 0,
+        "durationSec": null,
+        "posterUrl": null,
+        "isLive": false,
+        "externalIds": [],
+        "gameId": "gam_jBVcMe1oYvtZ2aid",
+        "homeLogoUrl": null,
+        "awayLogoUrl": null,
+        "liveState": "none",
+        "opponentFixed": true
+      },
+      {
+        "id": "gam_zuHJDOY38K_N4IoC",
+        "isUmpire": false,
+        "homeTeamId": "tem_Pj9yp6msEhAJIh8a",
+        "awayTeamId": "tem_e4ZtL_YXjFLFRAcv",
+        "homeTeamName": "S3 Team 8 9f63b767",
+        "awayTeamName": "S3 Team 9 9f63b767",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-05-02T00:00:00.000Z",
+        "venue": "Packed Park 9f63b767",
+        "endAt": "2027-05-02T01:30:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "address": "1 Packed Park Way",
+        "notes": null,
+        "arrivalTimeDelta": null,
+        "eventType": "game",
+        "latitude": 32.7,
+        "longitude": -117.1,
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "ingestStatus": "none",
+        "videoCount": 0,
+        "durationSec": null,
+        "posterUrl": null,
+        "isLive": false,
+        "externalIds": [],
+        "gameId": "gam_zuHJDOY38K_N4IoC",
+        "homeLogoUrl": null,
+        "awayLogoUrl": null,
+        "liveState": "none",
+        "opponentFixed": true
+      },
+      {
+        "id": "gam_S1leuTJYO_9G39Dn",
+        "isUmpire": false,
+        "homeTeamId": "tem_cD1GmIh-f-QURDMi",
+        "awayTeamId": "tem_X-aP95Yx3c3FRarp",
+        "homeTeamName": "S3 Team 10 9f63b767",
+        "awayTeamName": "S3 Team 3 9f63b767",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-05-01T21:30:00.000Z",
+        "venue": "Packed Park 9f63b767",
+        "endAt": "2027-05-01T23:00:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "address": "1 Packed Park Way",
+        "notes": null,
+        "arrivalTimeDelta": null,
+        "eventType": "game",
+        "latitude": 32.7,
+        "longitude": -117.1,
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "ingestStatus": "none",
+        "videoCount": 0,
+        "durationSec": null,
+        "posterUrl": null,
+        "isLive": false,
+        "externalIds": [],
+        "gameId": "gam_S1leuTJYO_9G39Dn",
+        "homeLogoUrl": null,
+        "awayLogoUrl": null,
+        "liveState": "none",
+        "opponentFixed": true
+      },
+      {
+        "id": "gam_rX-ycfnOO9KYrmiW",
+        "isUmpire": false,
+        "homeTeamId": "tem_xNBkhShBP6MjG_je",
+        "awayTeamId": "tem_rPCiN518PKXsf_TB",
+        "homeTeamName": "S3 Team 2 9f63b767",
+        "awayTeamName": "S3 Team 4 9f63b767",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-05-01T19:30:00.000Z",
+        "venue": "Packed Park 9f63b767",
+        "endAt": "2027-05-01T21:00:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "address": "1 Packed Park Way",
+        "notes": null,
+        "arrivalTimeDelta": null,
+        "eventType": "game",
+        "latitude": 32.7,
+        "longitude": -117.1,
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "ingestStatus": "none",
+        "videoCount": 0,
+        "durationSec": null,
+        "posterUrl": null,
+        "isLive": false,
+        "externalIds": [],
+        "gameId": "gam_rX-ycfnOO9KYrmiW",
+        "homeLogoUrl": null,
+        "awayLogoUrl": null,
+        "liveState": "none",
+        "opponentFixed": true
+      },
+      {
+        "id": "gam_zk74LZJ82d0Mf0p8",
+        "isUmpire": false,
+        "homeTeamId": "tem_M02aUEacftkRpAXe",
+        "awayTeamId": "tem_Pl7Q1llyQOMZ2xc1",
+        "homeTeamName": "S3 Team 1 9f63b767",
+        "awayTeamName": "S3 Team 7 9f63b767",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-05-01T17:30:00.000Z",
+        "venue": "Packed Park 9f63b767",
+        "endAt": "2027-05-01T19:00:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "address": "1 Packed Park Way",
+        "notes": null,
+        "arrivalTimeDelta": null,
+        "eventType": "game",
+        "latitude": 32.7,
+        "longitude": -117.1,
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "ingestStatus": "none",
+        "videoCount": 0,
+        "durationSec": null,
+        "posterUrl": null,
+        "isLive": false,
+        "externalIds": [],
+        "gameId": "gam_zk74LZJ82d0Mf0p8",
+        "homeLogoUrl": null,
+        "awayLogoUrl": null,
+        "liveState": "none",
+        "opponentFixed": true
+      },
+      {
+        "id": "gam_qk2hBVeosxvYxAYG",
+        "isUmpire": false,
+        "homeTeamId": "tem_L496GRsQMxodY1Zx",
+        "awayTeamId": "tem_RYZODz9Zgooykdz5",
+        "homeTeamName": "S3 Team 6 9f63b767",
+        "awayTeamName": "S3 Team 5 9f63b767",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-05-01T15:30:00.000Z",
+        "venue": "Packed Park 9f63b767",
+        "endAt": "2027-05-01T17:00:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "address": "1 Packed Park Way",
+        "notes": null,
+        "arrivalTimeDelta": null,
+        "eventType": "game",
+        "latitude": 32.7,
+        "longitude": -117.1,
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "ingestStatus": "none",
+        "videoCount": 0,
+        "durationSec": null,
+        "posterUrl": null,
+        "isLive": false,
+        "externalIds": [],
+        "gameId": "gam_qk2hBVeosxvYxAYG",
+        "homeLogoUrl": null,
+        "awayLogoUrl": null,
+        "liveState": "none",
+        "opponentFixed": true
+      },
+      {
+        "id": "gam_ykXbodervs4CCsRz",
+        "isUmpire": false,
+        "homeTeamId": "tem_RYZODz9Zgooykdz5",
+        "awayTeamId": "tem_Pj9yp6msEhAJIh8a",
+        "homeTeamName": "S3 Team 5 9f63b767",
+        "awayTeamName": "S3 Team 8 9f63b767",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-04-28T23:45:00.000Z",
+        "venue": "Packed Park 9f63b767",
+        "endAt": "2027-04-29T01:15:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "address": "1 Packed Park Way",
+        "notes": null,
+        "arrivalTimeDelta": null,
+        "eventType": "game",
+        "latitude": 32.7,
+        "longitude": -117.1,
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "ingestStatus": "none",
+        "videoCount": 0,
+        "durationSec": null,
+        "posterUrl": null,
+        "isLive": false,
+        "externalIds": [],
+        "gameId": "gam_ykXbodervs4CCsRz",
+        "homeLogoUrl": null,
+        "awayLogoUrl": null,
+        "liveState": "none",
+        "opponentFixed": true
+      },
+      {
+        "id": "gam_5A9hP1seCfkwqOAA",
+        "isUmpire": false,
+        "homeTeamId": "tem_M02aUEacftkRpAXe",
+        "awayTeamId": "tem_cD1GmIh-f-QURDMi",
+        "homeTeamName": "S3 Team 1 9f63b767",
+        "awayTeamName": "S3 Team 10 9f63b767",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-04-26T23:45:00.000Z",
+        "venue": "Packed Park 9f63b767",
+        "endAt": "2027-04-27T01:15:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "address": "1 Packed Park Way",
+        "notes": null,
+        "arrivalTimeDelta": null,
+        "eventType": "game",
+        "latitude": 32.7,
+        "longitude": -117.1,
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "ingestStatus": "none",
+        "videoCount": 0,
+        "durationSec": null,
+        "posterUrl": null,
+        "isLive": false,
+        "externalIds": [],
+        "gameId": "gam_5A9hP1seCfkwqOAA",
+        "homeLogoUrl": null,
+        "awayLogoUrl": null,
+        "liveState": "none",
+        "opponentFixed": true
+      },
+      {
+        "id": "gam_cqArjf_fWFTSvbLt",
+        "isUmpire": false,
+        "homeTeamId": "tem_X-aP95Yx3c3FRarp",
+        "awayTeamId": "tem_rPCiN518PKXsf_TB",
+        "homeTeamName": "S3 Team 3 9f63b767",
+        "awayTeamName": "S3 Team 4 9f63b767",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-04-24T23:30:00.000Z",
+        "venue": "Packed Park 9f63b767",
+        "endAt": "2027-04-25T01:00:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "address": "1 Packed Park Way",
+        "notes": null,
+        "arrivalTimeDelta": null,
+        "eventType": "game",
+        "latitude": 32.7,
+        "longitude": -117.1,
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "ingestStatus": "none",
+        "videoCount": 0,
+        "durationSec": null,
+        "posterUrl": null,
+        "isLive": false,
+        "externalIds": [],
+        "gameId": "gam_cqArjf_fWFTSvbLt",
+        "homeLogoUrl": null,
+        "awayLogoUrl": null,
+        "liveState": "none",
+        "opponentFixed": true
+      },
+      {
+        "id": "gam_AGa6Aeko8h5_Yy1R",
+        "isUmpire": false,
+        "homeTeamId": "tem_RYZODz9Zgooykdz5",
+        "awayTeamId": "tem_xNBkhShBP6MjG_je",
+        "homeTeamName": "S3 Team 5 9f63b767",
+        "awayTeamName": "S3 Team 2 9f63b767",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-04-24T21:30:00.000Z",
+        "venue": "Packed Park 9f63b767",
+        "endAt": "2027-04-24T23:00:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "address": "1 Packed Park Way",
+        "notes": null,
+        "arrivalTimeDelta": null,
+        "eventType": "game",
+        "latitude": 32.7,
+        "longitude": -117.1,
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "ingestStatus": "none",
+        "videoCount": 0,
+        "durationSec": null,
+        "posterUrl": null,
+        "isLive": false,
+        "externalIds": [],
+        "gameId": "gam_AGa6Aeko8h5_Yy1R",
+        "homeLogoUrl": null,
+        "awayLogoUrl": null,
+        "liveState": "none",
+        "opponentFixed": true
+      },
+      {
+        "id": "gam_IC3qXBZEws1crYEh",
+        "isUmpire": false,
+        "homeTeamId": "tem_Pj9yp6msEhAJIh8a",
+        "awayTeamId": "tem_Pl7Q1llyQOMZ2xc1",
+        "homeTeamName": "S3 Team 8 9f63b767",
+        "awayTeamName": "S3 Team 7 9f63b767",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-04-24T19:30:00.000Z",
+        "venue": "Packed Park 9f63b767",
+        "endAt": "2027-04-24T21:00:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "address": "1 Packed Park Way",
+        "notes": null,
+        "arrivalTimeDelta": null,
+        "eventType": "game",
+        "latitude": 32.7,
+        "longitude": -117.1,
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "ingestStatus": "none",
+        "videoCount": 0,
+        "durationSec": null,
+        "posterUrl": null,
+        "isLive": false,
+        "externalIds": [],
+        "gameId": "gam_IC3qXBZEws1crYEh",
+        "homeLogoUrl": null,
+        "awayLogoUrl": null,
+        "liveState": "none",
+        "opponentFixed": true
+      },
+      {
+        "id": "gam_NwmrdGOugBsdhH2M",
+        "isUmpire": false,
+        "homeTeamId": "tem_cD1GmIh-f-QURDMi",
+        "awayTeamId": "tem_L496GRsQMxodY1Zx",
+        "homeTeamName": "S3 Team 10 9f63b767",
+        "awayTeamName": "S3 Team 6 9f63b767",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-04-24T17:30:00.000Z",
+        "venue": "Packed Park 9f63b767",
+        "endAt": "2027-04-24T19:00:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "address": "1 Packed Park Way",
+        "notes": null,
+        "arrivalTimeDelta": null,
+        "eventType": "game",
+        "latitude": 32.7,
+        "longitude": -117.1,
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "ingestStatus": "none",
+        "videoCount": 0,
+        "durationSec": null,
+        "posterUrl": null,
+        "isLive": false,
+        "externalIds": [],
+        "gameId": "gam_NwmrdGOugBsdhH2M",
+        "homeLogoUrl": null,
+        "awayLogoUrl": null,
+        "liveState": "none",
+        "opponentFixed": true
+      },
+      {
+        "id": "gam_zSjvSGLQj-JdHsr1",
+        "isUmpire": false,
+        "homeTeamId": "tem_e4ZtL_YXjFLFRAcv",
+        "awayTeamId": "tem_M02aUEacftkRpAXe",
+        "homeTeamName": "S3 Team 9 9f63b767",
+        "awayTeamName": "S3 Team 1 9f63b767",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-04-24T15:30:00.000Z",
+        "venue": "Packed Park 9f63b767",
+        "endAt": "2027-04-24T17:00:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "address": "1 Packed Park Way",
+        "notes": null,
+        "arrivalTimeDelta": null,
+        "eventType": "game",
+        "latitude": 32.7,
+        "longitude": -117.1,
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "ingestStatus": "none",
+        "videoCount": 0,
+        "durationSec": null,
+        "posterUrl": null,
+        "isLive": false,
+        "externalIds": [],
+        "gameId": "gam_zSjvSGLQj-JdHsr1",
+        "homeLogoUrl": null,
+        "awayLogoUrl": null,
+        "liveState": "none",
+        "opponentFixed": true
+      },
+      {
+        "id": "gam_vW-dB52jNZ_HLNJ1",
+        "isUmpire": false,
+        "homeTeamId": "tem_L496GRsQMxodY1Zx",
+        "awayTeamId": "tem_M02aUEacftkRpAXe",
+        "homeTeamName": "S3 Team 6 9f63b767",
+        "awayTeamName": "S3 Team 1 9f63b767",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-04-21T23:45:00.000Z",
+        "venue": "Packed Park 9f63b767",
+        "endAt": "2027-04-22T01:15:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "address": "1 Packed Park Way",
+        "notes": null,
+        "arrivalTimeDelta": null,
+        "eventType": "game",
+        "latitude": 32.7,
+        "longitude": -117.1,
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "ingestStatus": "none",
+        "videoCount": 0,
+        "durationSec": null,
+        "posterUrl": null,
+        "isLive": false,
+        "externalIds": [],
+        "gameId": "gam_vW-dB52jNZ_HLNJ1",
+        "homeLogoUrl": null,
+        "awayLogoUrl": null,
+        "liveState": "none",
+        "opponentFixed": true
+      },
+      {
+        "id": "gam_PxciLebg7-faD1eY",
+        "isUmpire": false,
+        "homeTeamId": "tem_rPCiN518PKXsf_TB",
+        "awayTeamId": "tem_Pl7Q1llyQOMZ2xc1",
+        "homeTeamName": "S3 Team 4 9f63b767",
+        "awayTeamName": "S3 Team 7 9f63b767",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-04-19T23:45:00.000Z",
+        "venue": "Packed Park 9f63b767",
+        "endAt": "2027-04-20T01:15:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "address": "1 Packed Park Way",
+        "notes": null,
+        "arrivalTimeDelta": null,
+        "eventType": "game",
+        "latitude": 32.7,
+        "longitude": -117.1,
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "ingestStatus": "none",
+        "videoCount": 0,
+        "durationSec": null,
+        "posterUrl": null,
+        "isLive": false,
+        "externalIds": [],
+        "gameId": "gam_PxciLebg7-faD1eY",
+        "homeLogoUrl": null,
+        "awayLogoUrl": null,
+        "liveState": "none",
+        "opponentFixed": true
+      },
+      {
+        "id": "gam_Etad7VMiDrV7WtLK",
+        "isUmpire": false,
+        "homeTeamId": "tem_Pl7Q1llyQOMZ2xc1",
+        "awayTeamId": "tem_e4ZtL_YXjFLFRAcv",
+        "homeTeamName": "S3 Team 7 9f63b767",
+        "awayTeamName": "S3 Team 9 9f63b767",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-04-17T23:30:00.000Z",
+        "venue": "Packed Park 9f63b767",
+        "endAt": "2027-04-18T01:00:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "address": "1 Packed Park Way",
+        "notes": null,
+        "arrivalTimeDelta": null,
+        "eventType": "game",
+        "latitude": 32.7,
+        "longitude": -117.1,
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "ingestStatus": "none",
+        "videoCount": 0,
+        "durationSec": null,
+        "posterUrl": null,
+        "isLive": false,
+        "externalIds": [],
+        "gameId": "gam_Etad7VMiDrV7WtLK",
+        "homeLogoUrl": null,
+        "awayLogoUrl": null,
+        "liveState": "none",
+        "opponentFixed": true
+      },
+      {
+        "id": "gam_mne9zxOQ6TrGESpK",
+        "isUmpire": false,
+        "homeTeamId": "tem_RYZODz9Zgooykdz5",
+        "awayTeamId": "tem_M02aUEacftkRpAXe",
+        "homeTeamName": "S3 Team 5 9f63b767",
+        "awayTeamName": "S3 Team 1 9f63b767",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-04-17T21:30:00.000Z",
+        "venue": "Packed Park 9f63b767",
+        "endAt": "2027-04-17T23:00:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "address": "1 Packed Park Way",
+        "notes": null,
+        "arrivalTimeDelta": null,
+        "eventType": "game",
+        "latitude": 32.7,
+        "longitude": -117.1,
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "ingestStatus": "none",
+        "videoCount": 0,
+        "durationSec": null,
+        "posterUrl": null,
+        "isLive": false,
+        "externalIds": [],
+        "gameId": "gam_mne9zxOQ6TrGESpK",
+        "homeLogoUrl": null,
+        "awayLogoUrl": null,
+        "liveState": "none",
+        "opponentFixed": true
+      },
+      {
+        "id": "gam_2D0t1ycJpFJ3rVZu",
+        "isUmpire": false,
+        "homeTeamId": "tem_cD1GmIh-f-QURDMi",
+        "awayTeamId": "tem_rPCiN518PKXsf_TB",
+        "homeTeamName": "S3 Team 10 9f63b767",
+        "awayTeamName": "S3 Team 4 9f63b767",
+        "homeTeamExternal": false,
+        "awayTeamExternal": false,
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "startAt": "2027-04-17T19:30:00.000Z",
+        "venue": "Packed Park 9f63b767",
+        "endAt": "2027-04-17T21:00:00.000Z",
+        "hasScoringEvents": false,
+        "isGameLive": false,
+        "address": "1 Packed Park Way",
+        "notes": null,
+        "arrivalTimeDelta": null,
+        "eventType": "game",
+        "latitude": 32.7,
+        "longitude": -117.1,
+        "exhibition": false,
+        "timezone": "America/Los_Angeles",
+        "cancellationReason": null,
+        "withdrawnByTeamId": null,
+        "withdrawnByTeamName": null,
+        "pendingApproval": false,
+        "pendingRequestId": null,
+        "status": "scheduled",
+        "homeScore": null,
+        "awayScore": null,
+        "ingestStatus": "none",
+        "videoCount": 0,
+        "durationSec": null,
+        "posterUrl": null,
+        "isLive": false,
+        "externalIds": [],
+        "gameId": "gam_2D0t1ycJpFJ3rVZu",
+        "homeLogoUrl": null,
+        "awayLogoUrl": null,
+        "liveState": "none",
+        "opponentFixed": true
+      }
+    ],
+    "nextCursor": null,
+    "prevCursor": null,
+    "anchorId": null,
+    "counts": {
+      "total": 60,
+      "upcoming": 60,
+      "withVideo": 0,
+      "videos": 0,
+      "newestSeasonId": "sea_rt_zGYyzvtqY38fF"
+    }
+  },
+  "/live": [],
+  "/me/home": {
+    "teams": [
+      {
+        "id": "tem_qTkqJ4M96km1JZbG",
+        "name": "S4 Team 1 9f63b767",
+        "shortName": null,
+        "logoPath": null,
+        "logoUrl": null,
+        "record": null,
+        "externalIds": [],
+        "kind": "full",
+        "direct": true,
+        "source": "member"
+      },
+      {
+        "id": "tem_-RT-lEY8WfJy12Hv",
+        "name": "S5 Team 1 9f63b767",
+        "shortName": null,
+        "logoPath": null,
+        "logoUrl": null,
+        "record": null,
+        "externalIds": [],
+        "kind": "full",
+        "direct": true,
+        "source": "member"
+      },
+      {
+        "id": "tem_M02aUEacftkRpAXe",
+        "name": "S3 Team 1 9f63b767",
+        "shortName": null,
+        "logoPath": null,
+        "logoUrl": null,
+        "record": null,
+        "externalIds": [],
+        "kind": "full",
+        "direct": true,
+        "source": "member"
+      },
+      {
+        "id": "tem_PMz1SKGaGy7hQoLG",
+        "name": "Dodgers 8da51c73",
+        "shortName": null,
+        "logoPath": null,
+        "logoUrl": null,
+        "record": null,
+        "externalIds": [],
+        "kind": "full",
+        "direct": true,
+        "source": "member"
+      }
+    ],
+    "seasons": [],
+    "leagues": []
+  },
+  "/users": [],
+  "/leagues/lea_JlnGnAsS__HHKzr6/me/umpire-availability": {
+    "availability": null
+  },
+  "/leagues/lea_JlnGnAsS__HHKzr6/umpire-schedule": {
+    "settings": { "management": true, "credits": false, "sort": null },
+    "levels": [
+      {
+        "id": "uml_glassMajors",
+        "name": "Majors",
+        "position": 0,
+        "inUse": true
+      }
+    ],
+    "types": [
+      { "id": "uty_glassPlate", "name": "Plate", "position": 0, "inUse": true },
+      { "id": "uty_glassField", "name": "Field", "position": 1, "inUse": true }
+    ],
+    "noteTypes": [],
+    "creditTeams": [],
+    "viewerId": "usr_YFavCB8P2t9RFmE3gmusMP",
+    "isAdmin": true,
+    "view": "schedule",
+    "sort": ["date", "season"],
+    "items": [
+      {
+        "id": "gam_h9XpiUHEUhNii3k0",
+        "seasonId": "sea__NY3cp4TqvgLtBZ2",
+        "seasonName": "S1",
+        "levelId": "uml_glassMajors",
+        "levelName": "Majors",
+        "startAt": "2027-02-27T16:30:00.000Z",
+        "endAt": "2027-02-27T17:30:00.000Z",
+        "timezone": "America/Los_Angeles",
+        "date": "Feb 27, 8:30 am",
+        "status": "scheduled",
+        "home": "S1 Team 2 9f63b767",
+        "away": "S1 Team 4 9f63b767",
+        "homeTeamId": "tem_IBhkwNxV-kO0C0t4",
+        "awayTeamId": "tem_ZIMnkH15YRQ5ix2K",
+        "location": "32.7,-117.1",
+        "venue": "Packed Park 9f63b767",
+        "field": "F1",
+        "notes": "",
+        "umpireNotes": {},
+        "positions": [
+          {
+            "slot": "uty_glassPlate:1",
+            "typeId": "uty_glassPlate",
+            "typeName": "Plate",
+            "ordinal": 1,
+            "required": true
+          },
+          {
+            "slot": "uty_glassField:1",
+            "typeId": "uty_glassField",
+            "typeName": "Field",
+            "ordinal": 1,
+            "required": true
+          }
+        ],
+        "assignments": {},
+        "conflicts": [],
+        "choices": {
+          "uty_glassPlate:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ],
+          "uty_glassField:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ]
+        }
+      },
+      {
+        "id": "gam_aN513Lmirk1HlaDg",
+        "seasonId": "sea__NY3cp4TqvgLtBZ2",
+        "seasonName": "S1",
+        "levelId": "uml_glassMajors",
+        "levelName": "Majors",
+        "startAt": "2027-02-27T17:45:00.000Z",
+        "endAt": "2027-02-27T18:45:00.000Z",
+        "timezone": "America/Los_Angeles",
+        "date": "Feb 27, 9:45 am",
+        "status": "scheduled",
+        "home": "S1 Team 1 9f63b767",
+        "away": "S1 Team 5 9f63b767",
+        "homeTeamId": "tem_lYxqeqUP0ilUe7xs",
+        "awayTeamId": "tem_YpJvpzW8e8sCFI69",
+        "location": "32.7,-117.1",
+        "venue": "Packed Park 9f63b767",
+        "field": "F1",
+        "notes": "",
+        "umpireNotes": {},
+        "positions": [
+          {
+            "slot": "uty_glassPlate:1",
+            "typeId": "uty_glassPlate",
+            "typeName": "Plate",
+            "ordinal": 1,
+            "required": true
+          },
+          {
+            "slot": "uty_glassField:1",
+            "typeId": "uty_glassField",
+            "typeName": "Field",
+            "ordinal": 1,
+            "required": true
+          }
+        ],
+        "assignments": {},
+        "conflicts": [],
+        "choices": {
+          "uty_glassPlate:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ],
+          "uty_glassField:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ]
+        }
+      },
+      {
+        "id": "gam_o0-OmhfmN_ZM6TqA",
+        "seasonId": "sea__NY3cp4TqvgLtBZ2",
+        "seasonName": "S1",
+        "levelId": "uml_glassMajors",
+        "levelName": "Majors",
+        "startAt": "2027-02-27T19:00:00.000Z",
+        "endAt": "2027-02-27T20:00:00.000Z",
+        "timezone": "America/Los_Angeles",
+        "date": "Feb 27, 11:00 am",
+        "status": "scheduled",
+        "home": "S1 Team 6 9f63b767",
+        "away": "S1 Team 3 9f63b767",
+        "homeTeamId": "tem_l08aGSiFMHdnRLws",
+        "awayTeamId": "tem_vnQGZdpR0DDc-5KM",
+        "location": "32.7,-117.1",
+        "venue": "Packed Park 9f63b767",
+        "field": "F1",
+        "notes": "",
+        "umpireNotes": {},
+        "positions": [
+          {
+            "slot": "uty_glassPlate:1",
+            "typeId": "uty_glassPlate",
+            "typeName": "Plate",
+            "ordinal": 1,
+            "required": true
+          },
+          {
+            "slot": "uty_glassField:1",
+            "typeId": "uty_glassField",
+            "typeName": "Field",
+            "ordinal": 1,
+            "required": true
+          }
+        ],
+        "assignments": {},
+        "conflicts": [],
+        "choices": {
+          "uty_glassPlate:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ],
+          "uty_glassField:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ]
+        }
+      },
+      {
+        "id": "gam_gk4taByqrjxaE7m5",
+        "seasonId": "sea_2QBb3wZ3iT4mz3OD",
+        "seasonName": "S2",
+        "levelId": "uml_glassMajors",
+        "levelName": "Majors",
+        "startAt": "2027-02-27T20:30:00.000Z",
+        "endAt": "2027-02-27T21:30:00.000Z",
+        "timezone": "America/Los_Angeles",
+        "date": "Feb 27, 12:30 pm",
+        "status": "scheduled",
+        "home": "S2 Team 5 9f63b767",
+        "away": "S2 Team 7 9f63b767",
+        "homeTeamId": "tem_wX9CA80DBi1Z3lMz",
+        "awayTeamId": "tem_nQbjqDxHzQAFKjNI",
+        "location": "32.7,-117.1",
+        "venue": "Packed Park 9f63b767",
+        "field": "F1",
+        "notes": "",
+        "umpireNotes": {},
+        "positions": [
+          {
+            "slot": "uty_glassPlate:1",
+            "typeId": "uty_glassPlate",
+            "typeName": "Plate",
+            "ordinal": 1,
+            "required": true
+          },
+          {
+            "slot": "uty_glassField:1",
+            "typeId": "uty_glassField",
+            "typeName": "Field",
+            "ordinal": 1,
+            "required": true
+          }
+        ],
+        "assignments": {},
+        "conflicts": [],
+        "choices": {
+          "uty_glassPlate:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ],
+          "uty_glassField:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ]
+        }
+      },
+      {
+        "id": "gam_av0tFbkcu0qzLLq9",
+        "seasonId": "sea_2QBb3wZ3iT4mz3OD",
+        "seasonName": "S2",
+        "levelId": "uml_glassMajors",
+        "levelName": "Majors",
+        "startAt": "2027-02-27T22:00:00.000Z",
+        "endAt": "2027-02-27T23:00:00.000Z",
+        "timezone": "America/Los_Angeles",
+        "date": "Feb 27, 2:00 pm",
+        "status": "scheduled",
+        "home": "S2 Team 1 9f63b767",
+        "away": "S2 Team 2 9f63b767",
+        "homeTeamId": "tem_LcDekF4xmVdbptGw",
+        "awayTeamId": "tem_KHSFgmGOk1Hg2XVw",
+        "location": "32.7,-117.1",
+        "venue": "Packed Park 9f63b767",
+        "field": "F1",
+        "notes": "",
+        "umpireNotes": {},
+        "positions": [
+          {
+            "slot": "uty_glassPlate:1",
+            "typeId": "uty_glassPlate",
+            "typeName": "Plate",
+            "ordinal": 1,
+            "required": true
+          },
+          {
+            "slot": "uty_glassField:1",
+            "typeId": "uty_glassField",
+            "typeName": "Field",
+            "ordinal": 1,
+            "required": true
+          }
+        ],
+        "assignments": {},
+        "conflicts": [],
+        "choices": {
+          "uty_glassPlate:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ],
+          "uty_glassField:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ]
+        }
+      },
+      {
+        "id": "gam_REhDFIa7LgQaNeGR",
+        "seasonId": "sea_2QBb3wZ3iT4mz3OD",
+        "seasonName": "S2",
+        "levelId": "uml_glassMajors",
+        "levelName": "Majors",
+        "startAt": "2027-02-27T23:30:00.000Z",
+        "endAt": "2027-02-28T00:30:00.000Z",
+        "timezone": "America/Los_Angeles",
+        "date": "Feb 27, 3:30 pm",
+        "status": "scheduled",
+        "home": "S2 Team 4 9f63b767",
+        "away": "S2 Team 6 9f63b767",
+        "homeTeamId": "tem_rEruJ16b4kgdu8lS",
+        "awayTeamId": "tem_yA6B30KgM2swiSaj",
+        "location": "32.7,-117.1",
+        "venue": "Packed Park 9f63b767",
+        "field": "F1",
+        "notes": "",
+        "umpireNotes": {},
+        "positions": [
+          {
+            "slot": "uty_glassPlate:1",
+            "typeId": "uty_glassPlate",
+            "typeName": "Plate",
+            "ordinal": 1,
+            "required": true
+          },
+          {
+            "slot": "uty_glassField:1",
+            "typeId": "uty_glassField",
+            "typeName": "Field",
+            "ordinal": 1,
+            "required": true
+          }
+        ],
+        "assignments": {},
+        "conflicts": [],
+        "choices": {
+          "uty_glassPlate:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ],
+          "uty_glassField:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ]
+        }
+      },
+      {
+        "id": "gam_00kc1tutRWLXYxFl",
+        "seasonId": "sea_2QBb3wZ3iT4mz3OD",
+        "seasonName": "S2",
+        "levelId": "uml_glassMajors",
+        "levelName": "Majors",
+        "startAt": "2027-02-28T01:00:00.000Z",
+        "endAt": "2027-02-28T02:00:00.000Z",
+        "timezone": "America/Los_Angeles",
+        "date": "Feb 27, 5:00 pm",
+        "status": "scheduled",
+        "home": "S2 Team 3 9f63b767",
+        "away": "S2 Team 8 9f63b767",
+        "homeTeamId": "tem_qCFoL3V34EGCO_-A",
+        "awayTeamId": "tem_I3H9jC59Ryd6F-m_",
+        "location": "32.7,-117.1",
+        "venue": "Packed Park 9f63b767",
+        "field": "F1",
+        "notes": "",
+        "umpireNotes": {},
+        "positions": [
+          {
+            "slot": "uty_glassPlate:1",
+            "typeId": "uty_glassPlate",
+            "typeName": "Plate",
+            "ordinal": 1,
+            "required": true
+          },
+          {
+            "slot": "uty_glassField:1",
+            "typeId": "uty_glassField",
+            "typeName": "Field",
+            "ordinal": 1,
+            "required": true
+          }
+        ],
+        "assignments": {},
+        "conflicts": [],
+        "choices": {
+          "uty_glassPlate:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ],
+          "uty_glassField:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ]
+        }
+      },
+      {
+        "id": "gam_egcXONumG-LvEaoU",
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "seasonName": "S3",
+        "levelId": "uml_glassMajors",
+        "levelName": "Majors",
+        "startAt": "2027-02-27T16:30:00.000Z",
+        "endAt": "2027-02-27T18:00:00.000Z",
+        "timezone": "America/Los_Angeles",
+        "date": "Feb 27, 8:30 am",
+        "status": "scheduled",
+        "home": "S3 Team 4 9f63b767",
+        "away": "S3 Team 2 9f63b767",
+        "homeTeamId": "tem_rPCiN518PKXsf_TB",
+        "awayTeamId": "tem_xNBkhShBP6MjG_je",
+        "location": "32.7,-117.1",
+        "venue": "Packed Park 9f63b767",
+        "field": "F2",
+        "notes": "",
+        "umpireNotes": {},
+        "positions": [
+          {
+            "slot": "uty_glassPlate:1",
+            "typeId": "uty_glassPlate",
+            "typeName": "Plate",
+            "ordinal": 1,
+            "required": true
+          },
+          {
+            "slot": "uty_glassField:1",
+            "typeId": "uty_glassField",
+            "typeName": "Field",
+            "ordinal": 1,
+            "required": true
+          }
+        ],
+        "assignments": {},
+        "conflicts": [],
+        "choices": {
+          "uty_glassPlate:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ],
+          "uty_glassField:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ]
+        }
+      },
+      {
+        "id": "gam_DzzMM4TcyJLHz3_M",
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "seasonName": "S3",
+        "levelId": "uml_glassMajors",
+        "levelName": "Majors",
+        "startAt": "2027-02-27T18:30:00.000Z",
+        "endAt": "2027-02-27T20:00:00.000Z",
+        "timezone": "America/Los_Angeles",
+        "date": "Feb 27, 10:30 am",
+        "status": "scheduled",
+        "home": "S3 Team 1 9f63b767",
+        "away": "S3 Team 7 9f63b767",
+        "homeTeamId": "tem_M02aUEacftkRpAXe",
+        "awayTeamId": "tem_Pl7Q1llyQOMZ2xc1",
+        "location": "32.7,-117.1",
+        "venue": "Packed Park 9f63b767",
+        "field": "F2",
+        "notes": "",
+        "umpireNotes": {},
+        "positions": [
+          {
+            "slot": "uty_glassPlate:1",
+            "typeId": "uty_glassPlate",
+            "typeName": "Plate",
+            "ordinal": 1,
+            "required": true
+          },
+          {
+            "slot": "uty_glassField:1",
+            "typeId": "uty_glassField",
+            "typeName": "Field",
+            "ordinal": 1,
+            "required": true
+          }
+        ],
+        "assignments": {},
+        "conflicts": [],
+        "choices": {
+          "uty_glassPlate:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ],
+          "uty_glassField:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ]
+        }
+      },
+      {
+        "id": "gam_wjboD-zsyool17DP",
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "seasonName": "S3",
+        "levelId": "uml_glassMajors",
+        "levelName": "Majors",
+        "startAt": "2027-02-27T21:15:00.000Z",
+        "endAt": "2027-02-27T22:45:00.000Z",
+        "timezone": "America/Los_Angeles",
+        "date": "Feb 27, 1:15 pm",
+        "status": "scheduled",
+        "home": "S3 Team 3 9f63b767",
+        "away": "S3 Team 8 9f63b767",
+        "homeTeamId": "tem_X-aP95Yx3c3FRarp",
+        "awayTeamId": "tem_Pj9yp6msEhAJIh8a",
+        "location": "32.7,-117.1",
+        "venue": "Packed Park 9f63b767",
+        "field": "F2",
+        "notes": "",
+        "umpireNotes": {},
+        "positions": [
+          {
+            "slot": "uty_glassPlate:1",
+            "typeId": "uty_glassPlate",
+            "typeName": "Plate",
+            "ordinal": 1,
+            "required": true
+          },
+          {
+            "slot": "uty_glassField:1",
+            "typeId": "uty_glassField",
+            "typeName": "Field",
+            "ordinal": 1,
+            "required": true
+          }
+        ],
+        "assignments": {},
+        "conflicts": [],
+        "choices": {
+          "uty_glassPlate:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ],
+          "uty_glassField:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ]
+        }
+      },
+      {
+        "id": "gam_hnC6S6lKVXRlL5eJ",
+        "seasonId": "sea_rt_zGYyzvtqY38fF",
+        "seasonName": "S3",
+        "levelId": "uml_glassMajors",
+        "levelName": "Majors",
+        "startAt": "2027-02-27T23:15:00.000Z",
+        "endAt": "2027-02-28T00:45:00.000Z",
+        "timezone": "America/Los_Angeles",
+        "date": "Feb 27, 3:15 pm",
+        "status": "scheduled",
+        "home": "S3 Team 9 9f63b767",
+        "away": "S3 Team 5 9f63b767",
+        "homeTeamId": "tem_e4ZtL_YXjFLFRAcv",
+        "awayTeamId": "tem_RYZODz9Zgooykdz5",
+        "location": "32.7,-117.1",
+        "venue": "Packed Park 9f63b767",
+        "field": "F2",
+        "notes": "",
+        "umpireNotes": {},
+        "positions": [
+          {
+            "slot": "uty_glassPlate:1",
+            "typeId": "uty_glassPlate",
+            "typeName": "Plate",
+            "ordinal": 1,
+            "required": true
+          },
+          {
+            "slot": "uty_glassField:1",
+            "typeId": "uty_glassField",
+            "typeName": "Field",
+            "ordinal": 1,
+            "required": true
+          }
+        ],
+        "assignments": {},
+        "conflicts": [],
+        "choices": {
+          "uty_glassPlate:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ],
+          "uty_glassField:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ]
+        }
+      },
+      {
+        "id": "gam_ovi4sWUt6YMl8LD1",
+        "seasonId": "sea__DfoxrRDmS75vdYM",
+        "seasonName": "S4",
+        "levelId": "uml_glassMajors",
+        "levelName": "Majors",
+        "startAt": "2027-02-27T17:00:00.000Z",
+        "endAt": "2027-02-27T19:00:00.000Z",
+        "timezone": "America/Los_Angeles",
+        "date": "Feb 27, 9:00 am",
+        "status": "scheduled",
+        "home": "S4 Team 4 9f63b767",
+        "away": "S4 Team 3 9f63b767",
+        "homeTeamId": "tem_ieiErNg3Op4elLiW",
+        "awayTeamId": "tem_ZaxltNzKlI60BQ4F",
+        "location": "32.7,-117.1",
+        "venue": "Packed Park 9f63b767",
+        "field": "F3",
+        "notes": "",
+        "umpireNotes": {},
+        "positions": [
+          {
+            "slot": "uty_glassPlate:1",
+            "typeId": "uty_glassPlate",
+            "typeName": "Plate",
+            "ordinal": 1,
+            "required": true
+          },
+          {
+            "slot": "uty_glassField:1",
+            "typeId": "uty_glassField",
+            "typeName": "Field",
+            "ordinal": 1,
+            "required": true
+          }
+        ],
+        "assignments": {},
+        "conflicts": [],
+        "choices": {
+          "uty_glassPlate:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ],
+          "uty_glassField:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ]
+        }
+      },
+      {
+        "id": "gam_n3DnI7W80tLRFUtH",
+        "seasonId": "sea__DfoxrRDmS75vdYM",
+        "seasonName": "S4",
+        "levelId": "uml_glassMajors",
+        "levelName": "Majors",
+        "startAt": "2027-02-27T19:30:00.000Z",
+        "endAt": "2027-02-27T21:30:00.000Z",
+        "timezone": "America/Los_Angeles",
+        "date": "Feb 27, 11:30 am",
+        "status": "scheduled",
+        "home": "S4 Team 1 9f63b767",
+        "away": "S4 Team 6 9f63b767",
+        "homeTeamId": "tem_qTkqJ4M96km1JZbG",
+        "awayTeamId": "tem_U4qx3sQD0AZRVPC3",
+        "location": "32.7,-117.1",
+        "venue": "Packed Park 9f63b767",
+        "field": "F3",
+        "notes": "",
+        "umpireNotes": {},
+        "positions": [
+          {
+            "slot": "uty_glassPlate:1",
+            "typeId": "uty_glassPlate",
+            "typeName": "Plate",
+            "ordinal": 1,
+            "required": true
+          },
+          {
+            "slot": "uty_glassField:1",
+            "typeId": "uty_glassField",
+            "typeName": "Field",
+            "ordinal": 1,
+            "required": true
+          }
+        ],
+        "assignments": {},
+        "conflicts": [],
+        "choices": {
+          "uty_glassPlate:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ],
+          "uty_glassField:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ]
+        }
+      },
+      {
+        "id": "gam_jtS5fTmmgC5_5Hu0",
+        "seasonId": "sea__DfoxrRDmS75vdYM",
+        "seasonName": "S4",
+        "levelId": "uml_glassMajors",
+        "levelName": "Majors",
+        "startAt": "2027-02-27T22:00:00.000Z",
+        "endAt": "2027-02-28T00:00:00.000Z",
+        "timezone": "America/Los_Angeles",
+        "date": "Feb 27, 2:00 pm",
+        "status": "scheduled",
+        "home": "S4 Team 8 9f63b767",
+        "away": "S4 Team 7 9f63b767",
+        "homeTeamId": "tem_0M5wtP0TrgCPyPhl",
+        "awayTeamId": "tem_bbWP2ndFYhUsUvZc",
+        "location": "32.7,-117.1",
+        "venue": "Packed Park 9f63b767",
+        "field": "F3",
+        "notes": "",
+        "umpireNotes": {},
+        "positions": [
+          {
+            "slot": "uty_glassPlate:1",
+            "typeId": "uty_glassPlate",
+            "typeName": "Plate",
+            "ordinal": 1,
+            "required": true
+          },
+          {
+            "slot": "uty_glassField:1",
+            "typeId": "uty_glassField",
+            "typeName": "Field",
+            "ordinal": 1,
+            "required": true
+          }
+        ],
+        "assignments": {},
+        "conflicts": [],
+        "choices": {
+          "uty_glassPlate:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ],
+          "uty_glassField:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ]
+        }
+      },
+      {
+        "id": "gam_UzmPHQY-9ZTAwWGa",
+        "seasonId": "sea__DfoxrRDmS75vdYM",
+        "seasonName": "S4",
+        "levelId": "uml_glassMajors",
+        "levelName": "Majors",
+        "startAt": "2027-02-28T00:30:00.000Z",
+        "endAt": "2027-02-28T02:30:00.000Z",
+        "timezone": "America/Los_Angeles",
+        "date": "Feb 27, 4:30 pm",
+        "status": "scheduled",
+        "home": "S4 Team 2 9f63b767",
+        "away": "S4 Team 5 9f63b767",
+        "homeTeamId": "tem_4uhNn_MJran1Q-2x",
+        "awayTeamId": "tem_WFNdFylJlnIYhIHb",
+        "location": "32.7,-117.1",
+        "venue": "Packed Park 9f63b767",
+        "field": "F3",
+        "notes": "",
+        "umpireNotes": {},
+        "positions": [
+          {
+            "slot": "uty_glassPlate:1",
+            "typeId": "uty_glassPlate",
+            "typeName": "Plate",
+            "ordinal": 1,
+            "required": true
+          },
+          {
+            "slot": "uty_glassField:1",
+            "typeId": "uty_glassField",
+            "typeName": "Field",
+            "ordinal": 1,
+            "required": true
+          }
+        ],
+        "assignments": {},
+        "conflicts": [],
+        "choices": {
+          "uty_glassPlate:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ],
+          "uty_glassField:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ]
+        }
+      },
+      {
+        "id": "gam_X8D0pQs_U3czKa0R",
+        "seasonId": "sea_Cf_AvAcqEmU-h6oH",
+        "seasonName": "S5",
+        "levelId": "uml_glassMajors",
+        "levelName": "Majors",
+        "startAt": "2027-02-27T15:30:00.000Z",
+        "endAt": "2027-02-27T17:30:00.000Z",
+        "timezone": "America/Los_Angeles",
+        "date": "Feb 27, 7:30 am",
+        "status": "scheduled",
+        "home": "S5 Team 2 9f63b767",
+        "away": "S5 Team 5 9f63b767",
+        "homeTeamId": "tem_eLD5V0X_pJ3VoeiO",
+        "awayTeamId": "tem_ckvGuUwExGMuTzQC",
+        "location": "32.7,-117.1",
+        "venue": "Packed Park 9f63b767",
+        "field": "F4",
+        "notes": "",
+        "umpireNotes": {},
+        "positions": [
+          {
+            "slot": "uty_glassPlate:1",
+            "typeId": "uty_glassPlate",
+            "typeName": "Plate",
+            "ordinal": 1,
+            "required": true
+          },
+          {
+            "slot": "uty_glassField:1",
+            "typeId": "uty_glassField",
+            "typeName": "Field",
+            "ordinal": 1,
+            "required": true
+          }
+        ],
+        "assignments": {},
+        "conflicts": [],
+        "choices": {
+          "uty_glassPlate:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ],
+          "uty_glassField:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ]
+        }
+      },
+      {
+        "id": "gam_TLsTk-PYKu0AcQmn",
+        "seasonId": "sea_Cf_AvAcqEmU-h6oH",
+        "seasonName": "S5",
+        "levelId": "uml_glassMajors",
+        "levelName": "Majors",
+        "startAt": "2027-02-27T17:45:00.000Z",
+        "endAt": "2027-02-27T19:45:00.000Z",
+        "timezone": "America/Los_Angeles",
+        "date": "Feb 27, 9:45 am",
+        "status": "scheduled",
+        "home": "S5 Team 6 9f63b767",
+        "away": "S5 Team 9 9f63b767",
+        "homeTeamId": "tem_-QUeyii3MR2bQunO",
+        "awayTeamId": "tem_s4fhk-ifc3QC_1KH",
+        "location": "32.7,-117.1",
+        "venue": "Packed Park 9f63b767",
+        "field": "F4",
+        "notes": "",
+        "umpireNotes": {},
+        "positions": [
+          {
+            "slot": "uty_glassPlate:1",
+            "typeId": "uty_glassPlate",
+            "typeName": "Plate",
+            "ordinal": 1,
+            "required": true
+          },
+          {
+            "slot": "uty_glassField:1",
+            "typeId": "uty_glassField",
+            "typeName": "Field",
+            "ordinal": 1,
+            "required": true
+          }
+        ],
+        "assignments": {},
+        "conflicts": [],
+        "choices": {
+          "uty_glassPlate:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ],
+          "uty_glassField:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ]
+        }
+      },
+      {
+        "id": "gam_vUV6tRcZOhwzXe0m",
+        "seasonId": "sea_Cf_AvAcqEmU-h6oH",
+        "seasonName": "S5",
+        "levelId": "uml_glassMajors",
+        "levelName": "Majors",
+        "startAt": "2027-02-27T20:00:00.000Z",
+        "endAt": "2027-02-27T22:00:00.000Z",
+        "timezone": "America/Los_Angeles",
+        "date": "Feb 27, 12:00 pm",
+        "status": "scheduled",
+        "home": "S5 Team 10 9f63b767",
+        "away": "S5 Team 8 9f63b767",
+        "homeTeamId": "tem_x4idagUziawEr2iW",
+        "awayTeamId": "tem_ZxXp--CXL9ldVArK",
+        "location": "32.7,-117.1",
+        "venue": "Packed Park 9f63b767",
+        "field": "F4",
+        "notes": "",
+        "umpireNotes": {},
+        "positions": [
+          {
+            "slot": "uty_glassPlate:1",
+            "typeId": "uty_glassPlate",
+            "typeName": "Plate",
+            "ordinal": 1,
+            "required": true
+          },
+          {
+            "slot": "uty_glassField:1",
+            "typeId": "uty_glassField",
+            "typeName": "Field",
+            "ordinal": 1,
+            "required": true
+          }
+        ],
+        "assignments": {},
+        "conflicts": [],
+        "choices": {
+          "uty_glassPlate:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ],
+          "uty_glassField:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ]
+        }
+      },
+      {
+        "id": "gam_cBcRESNdbgZvB3Ib",
+        "seasonId": "sea_Cf_AvAcqEmU-h6oH",
+        "seasonName": "S5",
+        "levelId": "uml_glassMajors",
+        "levelName": "Majors",
+        "startAt": "2027-02-27T23:00:00.000Z",
+        "endAt": "2027-02-28T01:00:00.000Z",
+        "timezone": "America/Los_Angeles",
+        "date": "Feb 27, 3:00 pm",
+        "status": "scheduled",
+        "home": "S5 Team 3 9f63b767",
+        "away": "S5 Team 4 9f63b767",
+        "homeTeamId": "tem_epIxZMvPggHjASDn",
+        "awayTeamId": "tem_xtGUUkseioizTYaB",
+        "location": "32.7,-117.1",
+        "venue": "Packed Park 9f63b767",
+        "field": "F4",
+        "notes": "",
+        "umpireNotes": {},
+        "positions": [
+          {
+            "slot": "uty_glassPlate:1",
+            "typeId": "uty_glassPlate",
+            "typeName": "Plate",
+            "ordinal": 1,
+            "required": true
+          },
+          {
+            "slot": "uty_glassField:1",
+            "typeId": "uty_glassField",
+            "typeName": "Field",
+            "ordinal": 1,
+            "required": true
+          }
+        ],
+        "assignments": {},
+        "conflicts": [],
+        "choices": {
+          "uty_glassPlate:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ],
+          "uty_glassField:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ]
+        }
+      },
+      {
+        "id": "gam_IoT6z_pTOXTL0NI9",
+        "seasonId": "sea_ju2gKR-hQ9m7Vt9U",
+        "seasonName": "S6",
+        "levelId": "uml_glassMajors",
+        "levelName": "Majors",
+        "startAt": "2027-02-27T17:30:00.000Z",
+        "endAt": "2027-02-27T19:30:00.000Z",
+        "timezone": "America/Los_Angeles",
+        "date": "Feb 27, 9:30 am",
+        "status": "scheduled",
+        "home": "S6 Team 6 9f63b767",
+        "away": "S6 Team 7 9f63b767",
+        "homeTeamId": "tem_K_XrYFQmRBpZ4ij-",
+        "awayTeamId": "tem_wvlkhT6ebck0pU35",
+        "location": "32.7,-117.1",
+        "venue": "Packed Park 9f63b767",
+        "field": "F5",
+        "notes": "",
+        "umpireNotes": {},
+        "positions": [
+          {
+            "slot": "uty_glassPlate:1",
+            "typeId": "uty_glassPlate",
+            "typeName": "Plate",
+            "ordinal": 1,
+            "required": true
+          },
+          {
+            "slot": "uty_glassField:1",
+            "typeId": "uty_glassField",
+            "typeName": "Field",
+            "ordinal": 1,
+            "required": true
+          }
+        ],
+        "assignments": {},
+        "conflicts": [],
+        "choices": {
+          "uty_glassPlate:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ],
+          "uty_glassField:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ]
+        }
+      },
+      {
+        "id": "gam_md38qEpkFpP6akwx",
+        "seasonId": "sea_ju2gKR-hQ9m7Vt9U",
+        "seasonName": "S6",
+        "levelId": "uml_glassMajors",
+        "levelName": "Majors",
+        "startAt": "2027-02-27T20:00:00.000Z",
+        "endAt": "2027-02-27T22:00:00.000Z",
+        "timezone": "America/Los_Angeles",
+        "date": "Feb 27, 12:00 pm",
+        "status": "scheduled",
+        "home": "S6 Team 2 9f63b767",
+        "away": "S6 Team 5 9f63b767",
+        "homeTeamId": "tem_OBFEz3tMYCCqsgBY",
+        "awayTeamId": "tem_-pBZruucN3OfqH_T",
+        "location": "32.7,-117.1",
+        "venue": "Packed Park 9f63b767",
+        "field": "F5",
+        "notes": "",
+        "umpireNotes": {},
+        "positions": [
+          {
+            "slot": "uty_glassPlate:1",
+            "typeId": "uty_glassPlate",
+            "typeName": "Plate",
+            "ordinal": 1,
+            "required": true
+          },
+          {
+            "slot": "uty_glassField:1",
+            "typeId": "uty_glassField",
+            "typeName": "Field",
+            "ordinal": 1,
+            "required": true
+          }
+        ],
+        "assignments": {},
+        "conflicts": [],
+        "choices": {
+          "uty_glassPlate:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ],
+          "uty_glassField:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ]
+        }
+      },
+      {
+        "id": "gam_gc5VKBdKakjxR9-j",
+        "seasonId": "sea_ju2gKR-hQ9m7Vt9U",
+        "seasonName": "S6",
+        "levelId": "uml_glassMajors",
+        "levelName": "Majors",
+        "startAt": "2027-02-27T22:30:00.000Z",
+        "endAt": "2027-02-28T00:30:00.000Z",
+        "timezone": "America/Los_Angeles",
+        "date": "Feb 27, 2:30 pm",
+        "status": "scheduled",
+        "home": "S6 Team 1 9f63b767",
+        "away": "S6 Team 4 9f63b767",
+        "homeTeamId": "tem_gIXlfTtnzSaP5mmJ",
+        "awayTeamId": "tem_354FXaDl0UN_4wxd",
+        "location": "32.7,-117.1",
+        "venue": "Packed Park 9f63b767",
+        "field": "F5",
+        "notes": "",
+        "umpireNotes": {},
+        "positions": [
+          {
+            "slot": "uty_glassPlate:1",
+            "typeId": "uty_glassPlate",
+            "typeName": "Plate",
+            "ordinal": 1,
+            "required": true
+          },
+          {
+            "slot": "uty_glassField:1",
+            "typeId": "uty_glassField",
+            "typeName": "Field",
+            "ordinal": 1,
+            "required": true
+          }
+        ],
+        "assignments": {},
+        "conflicts": [],
+        "choices": {
+          "uty_glassPlate:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ],
+          "uty_glassField:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ]
+        }
+      },
+      {
+        "id": "gam_dNMECaVrDwE0ZRPP",
+        "seasonId": "sea_ju2gKR-hQ9m7Vt9U",
+        "seasonName": "S6",
+        "levelId": "uml_glassMajors",
+        "levelName": "Majors",
+        "startAt": "2027-02-28T01:00:00.000Z",
+        "endAt": "2027-02-28T03:00:00.000Z",
+        "timezone": "America/Los_Angeles",
+        "date": "Feb 27, 5:00 pm",
+        "status": "scheduled",
+        "home": "S6 Team 8 9f63b767",
+        "away": "S6 Team 9 9f63b767",
+        "homeTeamId": "tem_r_XOl96q1eXTnkAQ",
+        "awayTeamId": "tem_SR0VJdTalpuLUyaW",
+        "location": "32.7,-117.1",
+        "venue": "Packed Park 9f63b767",
+        "field": "F5",
+        "notes": "",
+        "umpireNotes": {},
+        "positions": [
+          {
+            "slot": "uty_glassPlate:1",
+            "typeId": "uty_glassPlate",
+            "typeName": "Plate",
+            "ordinal": 1,
+            "required": true
+          },
+          {
+            "slot": "uty_glassField:1",
+            "typeId": "uty_glassField",
+            "typeName": "Field",
+            "ordinal": 1,
+            "required": true
+          }
+        ],
+        "assignments": {},
+        "conflicts": [],
+        "choices": {
+          "uty_glassPlate:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ],
+          "uty_glassField:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ]
+        }
+      },
+      {
+        "id": "gam_ogRsRY3VCCf6EdQ-",
+        "seasonId": "sea_ju2gKR-hQ9m7Vt9U",
+        "seasonName": "S6",
+        "levelId": "uml_glassMajors",
+        "levelName": "Majors",
+        "startAt": "2027-03-02T01:30:00.000Z",
+        "endAt": "2027-03-02T03:30:00.000Z",
+        "timezone": "America/Los_Angeles",
+        "date": "Mar 1, 5:30 pm",
+        "status": "scheduled",
+        "home": "S6 Team 7 9f63b767",
+        "away": "S6 Team 2 9f63b767",
+        "homeTeamId": "tem_wvlkhT6ebck0pU35",
+        "awayTeamId": "tem_OBFEz3tMYCCqsgBY",
+        "location": "32.7,-117.1",
+        "venue": "Packed Park 9f63b767",
+        "field": "F5",
+        "notes": "",
+        "umpireNotes": {},
+        "positions": [
+          {
+            "slot": "uty_glassPlate:1",
+            "typeId": "uty_glassPlate",
+            "typeName": "Plate",
+            "ordinal": 1,
+            "required": true
+          },
+          {
+            "slot": "uty_glassField:1",
+            "typeId": "uty_glassField",
+            "typeName": "Field",
+            "ordinal": 1,
+            "required": true
+          }
+        ],
+        "assignments": {},
+        "conflicts": [],
+        "choices": {
+          "uty_glassPlate:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ],
+          "uty_glassField:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ]
+        }
+      },
+      {
+        "id": "gam_Y8rw_IqtA-ny1Grw",
+        "seasonId": "sea_ju2gKR-hQ9m7Vt9U",
+        "seasonName": "S6",
+        "levelId": "uml_glassMajors",
+        "levelName": "Majors",
+        "startAt": "2027-03-04T01:30:00.000Z",
+        "endAt": "2027-03-04T03:30:00.000Z",
+        "timezone": "America/Los_Angeles",
+        "date": "Mar 3, 5:30 pm",
+        "status": "scheduled",
+        "home": "S6 Team 5 9f63b767",
+        "away": "S6 Team 9 9f63b767",
+        "homeTeamId": "tem_-pBZruucN3OfqH_T",
+        "awayTeamId": "tem_SR0VJdTalpuLUyaW",
+        "location": "32.7,-117.1",
+        "venue": "Packed Park 9f63b767",
+        "field": "F5",
+        "notes": "",
+        "umpireNotes": {},
+        "positions": [
+          {
+            "slot": "uty_glassPlate:1",
+            "typeId": "uty_glassPlate",
+            "typeName": "Plate",
+            "ordinal": 1,
+            "required": true
+          },
+          {
+            "slot": "uty_glassField:1",
+            "typeId": "uty_glassField",
+            "typeName": "Field",
+            "ordinal": 1,
+            "required": true
+          }
+        ],
+        "assignments": {},
+        "conflicts": [],
+        "choices": {
+          "uty_glassPlate:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ],
+          "uty_glassField:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ]
+        }
+      },
+      {
+        "id": "gam_LP18scCTRrDD3kh0",
+        "seasonId": "sea__DfoxrRDmS75vdYM",
+        "seasonName": "S4",
+        "levelId": "uml_glassMajors",
+        "levelName": "Majors",
+        "startAt": "2027-03-05T01:00:00.000Z",
+        "endAt": "2027-03-05T03:00:00.000Z",
+        "timezone": "America/Los_Angeles",
+        "date": "Mar 4, 5:00 pm",
+        "status": "scheduled",
+        "home": "S4 Team 3 9f63b767",
+        "away": "S4 Team 8 9f63b767",
+        "homeTeamId": "tem_ZaxltNzKlI60BQ4F",
+        "awayTeamId": "tem_0M5wtP0TrgCPyPhl",
+        "location": "32.7,-117.1",
+        "venue": "Packed Park 9f63b767",
+        "field": "F3",
+        "notes": "",
+        "umpireNotes": {},
+        "positions": [
+          {
+            "slot": "uty_glassPlate:1",
+            "typeId": "uty_glassPlate",
+            "typeName": "Plate",
+            "ordinal": 1,
+            "required": true
+          },
+          {
+            "slot": "uty_glassField:1",
+            "typeId": "uty_glassField",
+            "typeName": "Field",
+            "ordinal": 1,
+            "required": true
+          }
+        ],
+        "assignments": {},
+        "conflicts": [],
+        "choices": {
+          "uty_glassPlate:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ],
+          "uty_glassField:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ]
+        }
+      },
+      {
+        "id": "gam_eOV3RNIFNt4ef68T",
+        "seasonId": "sea_ju2gKR-hQ9m7Vt9U",
+        "seasonName": "S6",
+        "levelId": "uml_glassMajors",
+        "levelName": "Majors",
+        "startAt": "2027-03-05T01:30:00.000Z",
+        "endAt": "2027-03-05T03:30:00.000Z",
+        "timezone": "America/Los_Angeles",
+        "date": "Mar 4, 5:30 pm",
+        "status": "scheduled",
+        "home": "S6 Team 4 9f63b767",
+        "away": "S6 Team 6 9f63b767",
+        "homeTeamId": "tem_354FXaDl0UN_4wxd",
+        "awayTeamId": "tem_K_XrYFQmRBpZ4ij-",
+        "location": "32.7,-117.1",
+        "venue": "Packed Park 9f63b767",
+        "field": "F5",
+        "notes": "",
+        "umpireNotes": {},
+        "positions": [
+          {
+            "slot": "uty_glassPlate:1",
+            "typeId": "uty_glassPlate",
+            "typeName": "Plate",
+            "ordinal": 1,
+            "required": true
+          },
+          {
+            "slot": "uty_glassField:1",
+            "typeId": "uty_glassField",
+            "typeName": "Field",
+            "ordinal": 1,
+            "required": true
+          }
+        ],
+        "assignments": {},
+        "conflicts": [],
+        "choices": {
+          "uty_glassPlate:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ],
+          "uty_glassField:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ]
+        }
+      },
+      {
+        "id": "gam_BrrXOMKbgaBoslHY",
+        "seasonId": "sea_ju2gKR-hQ9m7Vt9U",
+        "seasonName": "S6",
+        "levelId": "uml_glassMajors",
+        "levelName": "Majors",
+        "startAt": "2027-03-06T01:30:00.000Z",
+        "endAt": "2027-03-06T03:30:00.000Z",
+        "timezone": "America/Los_Angeles",
+        "date": "Mar 5, 5:30 pm",
+        "status": "scheduled",
+        "home": "S6 Team 8 9f63b767",
+        "away": "S6 Team 1 9f63b767",
+        "homeTeamId": "tem_r_XOl96q1eXTnkAQ",
+        "awayTeamId": "tem_gIXlfTtnzSaP5mmJ",
+        "location": "32.7,-117.1",
+        "venue": "Packed Park 9f63b767",
+        "field": "F5",
+        "notes": "",
+        "umpireNotes": {},
+        "positions": [
+          {
+            "slot": "uty_glassPlate:1",
+            "typeId": "uty_glassPlate",
+            "typeName": "Plate",
+            "ordinal": 1,
+            "required": true
+          },
+          {
+            "slot": "uty_glassField:1",
+            "typeId": "uty_glassField",
+            "typeName": "Field",
+            "ordinal": 1,
+            "required": true
+          }
+        ],
+        "assignments": {},
+        "conflicts": [],
+        "choices": {
+          "uty_glassPlate:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ],
+          "uty_glassField:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ]
+        }
+      },
+      {
+        "id": "gam_MKkVFcFljucw2T2I",
+        "seasonId": "sea__NY3cp4TqvgLtBZ2",
+        "seasonName": "S1",
+        "levelId": "uml_glassMajors",
+        "levelName": "Majors",
+        "startAt": "2027-03-06T16:30:00.000Z",
+        "endAt": "2027-03-06T17:30:00.000Z",
+        "timezone": "America/Los_Angeles",
+        "date": "Mar 6, 8:30 am",
+        "status": "scheduled",
+        "home": "S1 Team 4 9f63b767",
+        "away": "S1 Team 1 9f63b767",
+        "homeTeamId": "tem_ZIMnkH15YRQ5ix2K",
+        "awayTeamId": "tem_lYxqeqUP0ilUe7xs",
+        "location": "32.7,-117.1",
+        "venue": "Packed Park 9f63b767",
+        "field": "F1",
+        "notes": "",
+        "umpireNotes": {},
+        "positions": [
+          {
+            "slot": "uty_glassPlate:1",
+            "typeId": "uty_glassPlate",
+            "typeName": "Plate",
+            "ordinal": 1,
+            "required": true
+          },
+          {
+            "slot": "uty_glassField:1",
+            "typeId": "uty_glassField",
+            "typeName": "Field",
+            "ordinal": 1,
+            "required": true
+          }
+        ],
+        "assignments": {},
+        "conflicts": [],
+        "choices": {
+          "uty_glassPlate:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ],
+          "uty_glassField:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ]
+        }
+      },
+      {
+        "id": "gam_8hhGUy1jku-OpWDV",
+        "seasonId": "sea__NY3cp4TqvgLtBZ2",
+        "seasonName": "S1",
+        "levelId": "uml_glassMajors",
+        "levelName": "Majors",
+        "startAt": "2027-03-06T17:45:00.000Z",
+        "endAt": "2027-03-06T18:45:00.000Z",
+        "timezone": "America/Los_Angeles",
+        "date": "Mar 6, 9:45 am",
+        "status": "scheduled",
+        "home": "S1 Team 2 9f63b767",
+        "away": "S1 Team 5 9f63b767",
+        "homeTeamId": "tem_IBhkwNxV-kO0C0t4",
+        "awayTeamId": "tem_YpJvpzW8e8sCFI69",
+        "location": "32.7,-117.1",
+        "venue": "Packed Park 9f63b767",
+        "field": "F1",
+        "notes": "",
+        "umpireNotes": {},
+        "positions": [
+          {
+            "slot": "uty_glassPlate:1",
+            "typeId": "uty_glassPlate",
+            "typeName": "Plate",
+            "ordinal": 1,
+            "required": true
+          },
+          {
+            "slot": "uty_glassField:1",
+            "typeId": "uty_glassField",
+            "typeName": "Field",
+            "ordinal": 1,
+            "required": true
+          }
+        ],
+        "assignments": {},
+        "conflicts": [],
+        "choices": {
+          "uty_glassPlate:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ],
+          "uty_glassField:1": [
+            {
+              "userId": "usr_YFavCB8P2t9RFmE3gmusMP",
+              "name": "Admin",
+              "reason": "not certified for Majors"
+            }
+          ]
+        }
+      }
+    ],
+    "nextCursor": null,
+    "prevCursor": null,
+    "anchorId": "gam_X8D0pQs_U3czKa0R",
+    "counts": null,
+    "positions": [
+      {
+        "slot": "uty_glassPlate:1",
+        "typeId": "uty_glassPlate",
+        "typeName": "Plate",
+        "ordinal": 1,
+        "required": true,
+        "optionalHeader": null
+      },
+      {
+        "slot": "uty_glassField:1",
+        "typeId": "uty_glassField",
+        "typeName": "Field",
+        "ordinal": 1,
+        "required": true,
+        "optionalHeader": null
+      }
+    ]
+  },
+  "/leagues/lea_JlnGnAsS__HHKzr6/umpire-leaderboard": {
+    "completed": [],
+    "scheduled": [],
+    "teams": null
+  },
+  "/seasons": [
+    {
+      "id": "sea__DfoxrRDmS75vdYM",
+      "leagueId": "lea_JlnGnAsS__HHKzr6",
+      "name": "S4",
+      "year": 2027,
+      "term": "Spring",
+      "ageGroup": null,
+      "startsOn": "2027-03-01",
+      "endsOn": "2027-05-31",
+      "logoUrl": null,
+      "leaguePictureUrl": null,
+      "teams": 8,
+      "games": 56,
+      "videos": 0
+    },
+    {
+      "id": "sea__NY3cp4TqvgLtBZ2",
+      "leagueId": "lea_JlnGnAsS__HHKzr6",
+      "name": "S1",
+      "year": 2027,
+      "term": "Spring",
+      "ageGroup": null,
+      "startsOn": "2027-03-01",
+      "endsOn": "2027-05-31",
+      "logoUrl": null,
+      "leaguePictureUrl": null,
+      "teams": 6,
+      "games": 30,
+      "videos": 0
+    },
+    {
+      "id": "sea_2QBb3wZ3iT4mz3OD",
+      "leagueId": "lea_JlnGnAsS__HHKzr6",
+      "name": "S2",
+      "year": 2027,
+      "term": "Spring",
+      "ageGroup": null,
+      "startsOn": "2027-03-01",
+      "endsOn": "2027-05-31",
+      "logoUrl": null,
+      "leaguePictureUrl": null,
+      "teams": 8,
+      "games": 40,
+      "videos": 0
+    },
+    {
+      "id": "sea_Cf_AvAcqEmU-h6oH",
+      "leagueId": "lea_JlnGnAsS__HHKzr6",
+      "name": "S5",
+      "year": 2027,
+      "term": "Spring",
+      "ageGroup": null,
+      "startsOn": "2027-03-01",
+      "endsOn": "2027-05-31",
+      "logoUrl": null,
+      "leaguePictureUrl": null,
+      "teams": 10,
+      "games": 80,
+      "videos": 0
+    },
+    {
+      "id": "sea_ju2gKR-hQ9m7Vt9U",
+      "leagueId": "lea_JlnGnAsS__HHKzr6",
+      "name": "S6",
+      "year": 2027,
+      "term": "Spring",
+      "ageGroup": null,
+      "startsOn": "2027-03-01",
+      "endsOn": "2027-05-31",
+      "logoUrl": null,
+      "leaguePictureUrl": null,
+      "teams": 9,
+      "games": 72,
+      "videos": 0
+    },
+    {
+      "id": "sea_rt_zGYyzvtqY38fF",
+      "leagueId": "lea_JlnGnAsS__HHKzr6",
+      "name": "S3",
+      "year": 2027,
+      "term": "Spring",
+      "ageGroup": null,
+      "startsOn": "2027-03-01",
+      "endsOn": "2027-05-31",
+      "logoUrl": null,
+      "leaguePictureUrl": null,
+      "teams": 10,
+      "games": 60,
+      "videos": 0
+    },
+    {
+      "id": "sea_75rZUtwlf_kYPotP",
+      "leagueId": "lea_uj6-fm9AYJvC4ffO",
+      "name": "Scoring Season mx07yasl",
+      "year": 2026,
+      "term": "Fall",
+      "ageGroup": null,
+      "startsOn": "2026-03-01",
+      "endsOn": "2026-05-31",
+      "logoUrl": null,
+      "leaguePictureUrl": null,
+      "teams": 2,
+      "games": 1,
+      "videos": 0
+    }
+  ],
+  "/me/roles": {
+    "teams": {
+      "tem_-QUeyii3MR2bQunO": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_-RT-lEY8WfJy12Hv": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_-pBZruucN3OfqH_T": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_0M5wtP0TrgCPyPhl": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_354FXaDl0UN_4wxd": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_4uhNn_MJran1Q-2x": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_7SORxQt2EylJPzpH": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_G82t2nmHxz1aeNrP": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_I3H9jC59Ryd6F-m_": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_IBhkwNxV-kO0C0t4": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_KHSFgmGOk1Hg2XVw": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_K_XrYFQmRBpZ4ij-": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_L496GRsQMxodY1Zx": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_LcDekF4xmVdbptGw": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_M02aUEacftkRpAXe": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_OBFEz3tMYCCqsgBY": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_PMz1SKGaGy7hQoLG": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_Pj9yp6msEhAJIh8a": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_Pl7Q1llyQOMZ2xc1": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_RYZODz9Zgooykdz5": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_SR0VJdTalpuLUyaW": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_U4qx3sQD0AZRVPC3": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_WFNdFylJlnIYhIHb": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_X-aP95Yx3c3FRarp": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_YpJvpzW8e8sCFI69": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_ZIMnkH15YRQ5ix2K": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_ZaxltNzKlI60BQ4F": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_ZxXp--CXL9ldVArK": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem__52Qx0anMlPIH2oV": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_bbWP2ndFYhUsUvZc": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_cD1GmIh-f-QURDMi": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_ckvGuUwExGMuTzQC": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_cpiBpI59Z3hjZemv": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_e4ZtL_YXjFLFRAcv": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_eLD5V0X_pJ3VoeiO": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_epIxZMvPggHjASDn": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_gIXlfTtnzSaP5mmJ": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_glegoza9MN8-UvOW": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_ieiErNg3Op4elLiW": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_l08aGSiFMHdnRLws": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_lYxqeqUP0ilUe7xs": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_mVwyFq6zlPjc70hd": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_nQbjqDxHzQAFKjNI": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_qCFoL3V34EGCO_-A": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_qTkqJ4M96km1JZbG": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_rEruJ16b4kgdu8lS": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_rPCiN518PKXsf_TB": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_r_XOl96q1eXTnkAQ": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_s4fhk-ifc3QC_1KH": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_vnQGZdpR0DDc-5KM": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_wX9CA80DBi1Z3lMz": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_wvlkhT6ebck0pU35": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_x4idagUziawEr2iW": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_xNBkhShBP6MjG_je": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_xtGUUkseioizTYaB": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ],
+      "tem_yA6B30KgM2swiSaj": [
+        "admin",
+        "coach",
+        "assistant",
+        "scorekeeper",
+        "songkeeper",
+        "videographer"
+      ]
+    },
+    "guardianOf": []
+  },
+  "/chat/conversations": [
+    {
+      "id": "cnv_lB_ZjChJcDgCT4sy",
+      "kind": "teamMembers",
+      "title": "S3 Team 1 9f63b767 Members",
+      "scope": { "type": "team", "id": "tem_M02aUEacftkRpAXe" },
+      "scopeName": "S3 Team 1 9f63b767",
+      "avatarName": "S3 Team 1 9f63b767",
+      "avatarUrl": null,
+      "leagueId": null,
+      "leaguePictureUrl": null,
+      "lastSeq": 0,
+      "lastMessageAt": null,
+      "lastPostAt": null,
+      "lastPostId": null,
+      "lastPostSeq": 0,
+      "preferences": {
+        "pinned": false,
+        "muted": false,
+        "manualUnread": false,
+        "manualUnreadRevision": 0
+      },
+      "unread": 0,
+      "canPost": true,
+      "canModerate": true,
+      "locked": false,
+      "noHolder": false,
+      "closed": false,
+      "memberCount": 3,
+      "people": []
+    },
+    {
+      "id": "cnv_OZykyJ8uLE4b-oTN",
+      "kind": "teamMembers",
+      "title": "S4 Team 1 9f63b767 Members",
+      "scope": { "type": "team", "id": "tem_qTkqJ4M96km1JZbG" },
+      "scopeName": "S4 Team 1 9f63b767",
+      "avatarName": "S4 Team 1 9f63b767",
+      "avatarUrl": null,
+      "leagueId": null,
+      "leaguePictureUrl": null,
+      "lastSeq": 0,
+      "lastMessageAt": null,
+      "lastPostAt": null,
+      "lastPostId": null,
+      "lastPostSeq": 0,
+      "preferences": {
+        "pinned": false,
+        "muted": false,
+        "manualUnread": false,
+        "manualUnreadRevision": 0
+      },
+      "unread": 0,
+      "canPost": true,
+      "canModerate": true,
+      "locked": false,
+      "noHolder": false,
+      "closed": false,
+      "memberCount": 3,
+      "people": []
+    },
+    {
+      "id": "cnv_kVcfob2RSbV--Go8",
+      "kind": "teamMembers",
+      "title": "S5 Team 1 9f63b767 Members",
+      "scope": { "type": "team", "id": "tem_-RT-lEY8WfJy12Hv" },
+      "scopeName": "S5 Team 1 9f63b767",
+      "avatarName": "S5 Team 1 9f63b767",
+      "avatarUrl": null,
+      "leagueId": null,
+      "leaguePictureUrl": null,
+      "lastSeq": 0,
+      "lastMessageAt": null,
+      "lastPostAt": null,
+      "lastPostId": null,
+      "lastPostSeq": 0,
+      "preferences": {
+        "pinned": false,
+        "muted": false,
+        "manualUnread": false,
+        "manualUnreadRevision": 0
+      },
+      "unread": 0,
+      "canPost": true,
+      "canModerate": true,
+      "locked": false,
+      "noHolder": false,
+      "closed": false,
+      "memberCount": 3,
+      "people": []
+    },
+    {
+      "id": "cnv_AOryaD47p3Yht6N7",
+      "kind": "teamMembers",
+      "title": "Dodgers 8da51c73 Members",
+      "scope": { "type": "team", "id": "tem_PMz1SKGaGy7hQoLG" },
+      "scopeName": "Dodgers 8da51c73",
+      "avatarName": "Dodgers 8da51c73",
+      "avatarUrl": null,
+      "leagueId": null,
+      "leaguePictureUrl": null,
+      "lastSeq": 0,
+      "lastMessageAt": null,
+      "lastPostAt": null,
+      "lastPostId": null,
+      "lastPostSeq": 0,
+      "preferences": {
+        "pinned": false,
+        "muted": false,
+        "manualUnread": false,
+        "manualUnreadRevision": 0
+      },
+      "unread": 0,
+      "canPost": true,
+      "canModerate": true,
+      "locked": false,
+      "noHolder": false,
+      "closed": false,
+      "memberCount": 4,
+      "people": []
+    },
+    {
+      "id": "cnv_ehsmVt9ijg9HRSXi",
+      "kind": "seasonAnnouncements",
+      "title": "S3 - Packed League 9f63b767 Announcements",
+      "scope": { "type": "season", "id": "sea_rt_zGYyzvtqY38fF" },
+      "scopeName": "S3 - Packed League 9f63b767",
+      "avatarName": "S3",
+      "avatarUrl": null,
+      "leagueId": "lea_JlnGnAsS__HHKzr6",
+      "leaguePictureUrl": null,
+      "lastSeq": 0,
+      "lastMessageAt": null,
+      "lastPostAt": null,
+      "lastPostId": null,
+      "lastPostSeq": 0,
+      "preferences": {
+        "pinned": false,
+        "muted": false,
+        "manualUnread": false,
+        "manualUnreadRevision": 0
+      },
+      "unread": 0,
+      "canPost": false,
+      "canModerate": false,
+      "locked": false,
+      "noHolder": false,
+      "closed": false,
+      "memberCount": 12,
+      "people": []
+    },
+    {
+      "id": "cnv_y9xmPqQe9Djz28K7",
+      "kind": "seasonAnnouncements",
+      "title": "S4 - Packed League 9f63b767 Announcements",
+      "scope": { "type": "season", "id": "sea__DfoxrRDmS75vdYM" },
+      "scopeName": "S4 - Packed League 9f63b767",
+      "avatarName": "S4",
+      "avatarUrl": null,
+      "leagueId": "lea_JlnGnAsS__HHKzr6",
+      "leaguePictureUrl": null,
+      "lastSeq": 0,
+      "lastMessageAt": null,
+      "lastPostAt": null,
+      "lastPostId": null,
+      "lastPostSeq": 0,
+      "preferences": {
+        "pinned": false,
+        "muted": false,
+        "manualUnread": false,
+        "manualUnreadRevision": 0
+      },
+      "unread": 0,
+      "canPost": false,
+      "canModerate": false,
+      "locked": false,
+      "noHolder": false,
+      "closed": false,
+      "memberCount": 10,
+      "people": []
+    },
+    {
+      "id": "cnv_dAYdmQmekL_GUxrA",
+      "kind": "seasonAnnouncements",
+      "title": "S5 - Packed League 9f63b767 Announcements",
+      "scope": { "type": "season", "id": "sea_Cf_AvAcqEmU-h6oH" },
+      "scopeName": "S5 - Packed League 9f63b767",
+      "avatarName": "S5",
+      "avatarUrl": null,
+      "leagueId": "lea_JlnGnAsS__HHKzr6",
+      "leaguePictureUrl": null,
+      "lastSeq": 0,
+      "lastMessageAt": null,
+      "lastPostAt": null,
+      "lastPostId": null,
+      "lastPostSeq": 0,
+      "preferences": {
+        "pinned": false,
+        "muted": false,
+        "manualUnread": false,
+        "manualUnreadRevision": 0
+      },
+      "unread": 0,
+      "canPost": false,
+      "canModerate": false,
+      "locked": false,
+      "noHolder": false,
+      "closed": false,
+      "memberCount": 12,
+      "people": []
+    },
+    {
+      "id": "cnv_umpiresPackedLg",
+      "kind": "leagueUmpires",
+      "title": "Packed League 9f63b767 Umpires",
+      "scope": { "type": "league", "id": "lea_JlnGnAsS__HHKzr6" },
+      "scopeName": "Packed League 9f63b767",
+      "avatarName": "Packed League 9f63b767",
+      "avatarUrl": null,
+      "leagueId": "lea_JlnGnAsS__HHKzr6",
+      "leaguePictureUrl": null,
+      "lastSeq": 0,
+      "lastMessageAt": null,
+      "lastPostAt": null,
+      "lastPostId": null,
+      "lastPostSeq": 0,
+      "preferences": {
+        "pinned": false,
+        "muted": false,
+        "manualUnread": false,
+        "manualUnreadRevision": 0
+      },
+      "unread": 0,
+      "canPost": true,
+      "canModerate": true,
+      "locked": false,
+      "noHolder": false,
+      "closed": false,
+      "memberCount": 3,
+      "people": []
+    }
+  ]
+}

@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+
 import { expect } from 'chai'
 
 import {
@@ -8,6 +11,8 @@ import {
   TEAM_NAME,
   teamScheduleAnswer
 } from '../../../../src/test/teamScheduleFixture'
+import { signInWithPassword } from '../../../core/fixtures'
+import { iosIsSimulator } from '../../../core/prepare'
 import { BlockedError } from '../../../core/result'
 import {
   defineE2e,
@@ -16,18 +21,30 @@ import {
   type WebSession
 } from '../../../core/spec'
 import {
+  bandFrameOf,
+  boundsOf,
+  expectedPaneBottom,
   expectFrame,
+  GLASS_IDS,
   type GlassFrame,
   glassFrameOf,
+  type GlassKind,
   grownOf,
+  linesInColumn,
   pinAtOf,
+  phoneToTop,
   pinned,
   recordPhone,
   stepOnPhone,
   tabPoint
 } from '../../../rigs/app/glassGrowth'
 import { prove } from '../../../rigs/app/keyboardDock'
-import { openCoachApp } from '../../../rigs/coach/coachApp'
+import { setServer } from '../../../rigs/app/setServer'
+import {
+  clearSignInLimits,
+  DEVELOP_APP,
+  openCoachApp
+} from '../../../rigs/coach/coachApp'
 
 /**
  * The header's glass grows down over a pinned pill band with the scroll: on
@@ -37,12 +54,16 @@ import { openCoachApp } from '../../../rigs/coach/coachApp'
  * grown the shell's header draws no material and no lower line of its own;
  * a screen pushed over the pinned band has the normal header, and Back gives
  * the glass to the band again. On a wide window the header keeps its glass
- * and line over the sidebar, beside the scene's pane.
+ * and line over the sidebar, beside the scene's pane. A sticky section
+ * (`StickySectionLayout`: the season page, the umpire schedule) grows the
+ * same glass over its whole sticky stack.
  *
  * In a browser the API is answered by maestro-d's network mocks from the
- * team-schedule fixture (`src/test/teamScheduleFixture.ts`); maestro-d sets
- * the page's scroll, and `page` only reads where things are. On the iPhone
- * the `coach-game` world is seeded on the stack.
+ * team-schedule fixture (`src/test/teamScheduleFixture.ts`), or for the
+ * sticky sections from a league's recorded answers
+ * (`e2e/fixtures/glassStickyAnswers.json`); maestro-d sets the page's
+ * scroll, and `page` only reads where things are. On the phones the
+ * `coach-game` and `tess` worlds are seeded on the stack.
  */
 
 type Page = WebSession['page']
@@ -92,29 +113,55 @@ const ROUTES: Array<[string, string]> = [
   ['*/api/v1/events*', '/events?paged=1']
 ]
 
+/** The recorded league: a season of games, and its umpire schedule. */
+const STICKY_SEASON = 'sea_rt_zGYyzvtqY38fF'
+const STICKY_LEAGUE = 'lea_JlnGnAsS__HHKzr6'
+/** Before every recorded game, so the season's default list holds them all. */
+const STICKY_NOW = Date.parse('2027-02-01T20:00:00.000Z')
+
+/** The recorded answers, by path: longer paths are mocked first. */
+function stickyAnswers(): Array<[string, unknown]> {
+  const answers = JSON.parse(
+    readFileSync(
+      join(__dirname, '../../../fixtures/glassStickyAnswers.json'),
+      'utf8'
+    )
+  ) as Record<string, unknown>
+  return Object.entries(answers)
+    .sort(([a], [b]) => b.length - a.length)
+    .map(([path, body]) => [`*/api/v1${path}*`, body])
+}
+
+const json = (status: number, body: unknown): Record<string, unknown> => ({
+  status,
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify(body)
+})
+
 async function openWeb(
   ctx: E2eContext,
   size: { width: number; height: number },
-  path: string
+  path: string,
+  kind: GlassKind = 'band'
 ): Promise<WebSession> {
+  const sticky = kind === 'sticky'
   const session = await ctx.browser(size, {
-    clock: new Date(PINNED_NOW).toISOString(),
+    clock: new Date(sticky ? STICKY_NOW : PINNED_NOW).toISOString(),
     timeZone: 'America/Los_Angeles'
   })
   const { m } = session
-  const json = (status: number, body: unknown): Record<string, unknown> => ({
-    status,
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body)
-  })
-  for (const [url, path_] of ROUTES) {
-    const answer = teamScheduleAnswer('GET', `/api/v1${path_}`, PINNED_NOW)
-    await m.mockNetwork({
-      url,
-      method: 'GET',
-      response: json(answer.status, answer.body)
-    })
-  }
+  if (sticky) {
+    for (const [url, body] of stickyAnswers())
+      await m.mockNetwork({ url, method: 'GET', response: json(200, body) })
+  } else
+    for (const [url, path_] of ROUTES) {
+      const answer = teamScheduleAnswer('GET', `/api/v1${path_}`, PINNED_NOW)
+      await m.mockNetwork({
+        url,
+        method: 'GET',
+        response: json(answer.status, answer.body)
+      })
+    }
   await m.mockNetwork({
     url: '*/api/*',
     method: 'GET',
@@ -125,8 +172,8 @@ async function openWeb(
     response: json(404, { error: 'not found' })
   })
   await m.openLink({ link: `${ctx.stack.origin}${path}` })
-  await until('the team’s pills', async () =>
-    (await webFrame(session.page)) == null ? undefined : true
+  await until(sticky ? 'the sticky section' : 'the team’s pills', async () =>
+    (await webFrame(session.page, kind)) == null ? undefined : true
   )
   return session
 }
@@ -166,20 +213,37 @@ interface WebFrame extends GlassFrame {
     lineBottom: number
     filter: string
   } | null
+  /** The umpire schedule's stack: tabs, Chat and the column headers. */
+  umpire: {
+    tabsTop: number
+    chatTop: number
+    columnsBottom: number
+  } | null
 }
 
 /**
  * Plain JavaScript inside the page: the spec is compiled by sucrase, which
  * would turn `??` and `?.` into helpers the page does not have.
  */
-async function webFrame(page: Page): Promise<WebFrame | undefined> {
-  const read = await page.evaluate(() => {
+async function webFrame(
+  page: Page,
+  kind: GlassKind = 'band'
+): Promise<WebFrame | undefined> {
+  const ids = GLASS_IDS[kind]
+  const read = await page.evaluate(function (ids: {
+    bands: string[]
+    pane: string
+  }) {
     const header = document.querySelector('[data-testid="app-header"]')
     if (header === null) return null
     // The band on show: a covered scene's is hidden.
     const bands = Array.from(
       document.querySelectorAll(
-        '[data-testid="pill-band"], [data-testid="event-pill-band"]'
+        ids.bands
+          .map(function (id) {
+            return '[data-testid="' + id + '"]'
+          })
+          .join(', ')
       )
     ).filter(function (band) {
       const rect = band.getBoundingClientRect()
@@ -194,7 +258,7 @@ async function webFrame(page: Page): Promise<WebFrame | undefined> {
     })
     if (bands.length === 0) return null
     const band = bands[0]
-    const pane = band.querySelector('[data-testid="pill-band-glass"]')
+    const pane = band.querySelector('[data-testid="' + ids.pane + '"]')
     if (pane === null) return null
     const h = header.getBoundingClientRect()
     const b = band.getBoundingClientRect()
@@ -230,6 +294,19 @@ async function webFrame(page: Page): Promise<WebFrame | undefined> {
         filter: getComputedStyle(strip).backdropFilter
       }
     }
+    const stack = band.querySelector('[data-testid="umpire-sticky-stack"]')
+    let umpire = null
+    if (stack !== null) {
+      const tabs = stack.querySelector('[aria-label="Umpire pages"]')
+      const chat = stack.querySelector('[data-testid="umpire-chat"]')
+      const columns = stack.querySelector('[data-testid="umpire-table-header"]')
+      umpire = {
+        tabsTop: tabs === null ? -1 : tabs.getBoundingClientRect().top,
+        chatTop: chat === null ? -1 : chat.getBoundingClientRect().top,
+        columnsBottom:
+          columns === null ? -1 : columns.getBoundingClientRect().bottom
+      }
+    }
     return {
       headerBottom: h.bottom,
       headerRight: h.right,
@@ -243,9 +320,10 @@ async function webFrame(page: Page): Promise<WebFrame | undefined> {
       headerLine: parseFloat(hs.borderBottomWidth),
       paneGlass: pane.children.length > 1,
       lineBottom: line === null ? null : line.bottom,
-      sidebar
+      sidebar,
+      umpire
     }
-  })
+  }, ids)
   return read ?? undefined
 }
 
@@ -254,10 +332,14 @@ async function webFrame(page: Page): Promise<WebFrame | undefined> {
  * scroll event: react-native-web passes on at most one every 16ms, and the
  * last of a run 100ms after it.
  */
-async function scrollTo(session: WebSession, y: number): Promise<void> {
+async function scrollTo(
+  session: WebSession,
+  y: number,
+  kind: GlassKind = 'band'
+): Promise<void> {
   await session.m.evalBrowserScript({
     script: `(function () {
-      var band = document.querySelector('[data-testid="pill-band"]')
+      var band = document.querySelector('[data-testid="${GLASS_IDS[kind].bands[0]}"]')
       var node = band
       while (node && !/(auto|scroll)/.test(getComputedStyle(node).overflowY))
         node = node.parentElement
@@ -306,18 +388,19 @@ function expectHandover(frame: WebFrame, what: string): void {
 async function stepThrough(
   ctx: E2eContext,
   session: WebSession,
-  shots: boolean
-): Promise<{ pinAt: number; frames: number }> {
-  await scrollTo(session, 0)
-  const rest = (await webFrame(session.page))!
+  shots: boolean,
+  kind: GlassKind = 'band'
+): Promise<{ pinAt: number; frames: number; top: WebFrame }> {
+  await scrollTo(session, 0, kind)
+  const rest = (await webFrame(session.page, kind))!
   const pinAt = pinAtOf(rest)
   expect(pinAt, 'the band starts below the header').greaterThan(0)
   const band = rest.bandBottom - rest.bandTop
   let frames = 0
   let half = false
   const check = async (y: number): Promise<WebFrame> => {
-    await scrollTo(session, y)
-    const frame = (await webFrame(session.page))!
+    await scrollTo(session, y, kind)
+    const frame = (await webFrame(session.page, kind))!
     expectFrame(frame, pinAt, `scroll ${y}`)
     expectHandover(frame, `scroll ${y}`)
     frames++
@@ -334,22 +417,151 @@ async function stepThrough(
       half = true
     }
   }
-  const top = (await webFrame(session.page))!
+  const top = (await webFrame(session.page, kind))!
   expect(pinned(top), 'pinned at the end of the steps').equals(true)
   expect(grownOf(top), 'grown to the band’s lower edge').closeTo(1, 0.02)
   if (shots) await prove(ctx, session.m, 'web-team-glass-grow-100.png')
   for (let y = end; y >= 0; y -= STEP) await check(y)
-  return { pinAt, frames }
+  return { pinAt, frames, top }
 }
 
 /** A scenario for one kind of surface: the others report it blocked. */
-function on(kind: 'web' | 'ios', run: Scenario): Scenario {
+function on(kind: 'web' | 'ios' | 'android', run: Scenario): Scenario {
+  const surface = {
+    web: 'web-chromium',
+    ios: 'ios-app',
+    android: 'android-app'
+  }[kind]
   return async ctx => {
-    const web = ctx.surface === 'web-chromium'
-    if (web !== (kind === 'web') || (!web && ctx.surface !== 'ios-app'))
+    if (ctx.surface !== surface)
       throw new BlockedError(`${ctx.scenarioId} runs on ${kind} only`)
     await run(ctx)
   }
+}
+
+/**
+ * The `tess` world's admin signed in on the phone: Demo League A's Demo
+ * Regular season, with its games, and the league's umpire schedule, which
+ * the admin umpires in.
+ */
+async function openTessPhone(ctx: E2eContext): Promise<{
+  m: any
+  screen: { width: number; height: number }
+  ids: Record<string, string>
+  open: (path: string) => Promise<void>
+}> {
+  const world = await ctx.fixture('tess')
+  const platform = ctx.surface === 'ios-app' ? 'ios' : 'android'
+  const udid = ctx.device('device')
+  const m = await ctx.attach('device', { platform, appId: DEVELOP_APP })
+  await clearSignInLimits(ctx)
+  await m.launchApp({ appId: DEVELOP_APP, clearState: true })
+  await setServer({
+    platform,
+    udid,
+    appId: DEVELOP_APP,
+    origin: ctx.stack.origin,
+    device: m,
+    simulator: platform === 'ios' && iosIsSimulator(udid)
+  })
+  await signInWithPassword(m, world.accounts.admin)
+  const root = await m.hierarchy()
+  const screen = { width: root.bounds.width, height: root.bounds.height }
+  const open = async (path: string): Promise<void> => {
+    await m.openLink({ link: `teamstation://${path}` })
+    if (JSON.stringify(await m.hierarchy()).includes('"Open"'))
+      await m.tapOn({ text: 'Open', optional: true })
+  }
+  return { m, screen, ids: world.ids, open }
+}
+
+/**
+ * On iOS: 40pt steps from rest to the pin and back on the sticky section,
+ * every step's pane read from the hierarchy (`stepOnPhone`).
+ */
+async function stickyOnIos(
+  ctx: E2eContext,
+  m: any,
+  screen: { width: number; height: number },
+  name: string
+): Promise<void> {
+  await stepOnPhone(
+    m,
+    screen,
+    name,
+    async shot => {
+      await prove(ctx, m, `${shot}.png`)
+    },
+    false,
+    2,
+    'sticky'
+  )
+}
+
+/**
+ * On Android, where the hierarchy leaves the empty pane out: 40pt steps to
+ * the pin, the one lower line read from each screenshot, where the scroll
+ * puts the pane's edge, and the header and pane one filled surface.
+ */
+async function stickyOnAndroid(
+  ctx: E2eContext,
+  m: any,
+  name: string
+): Promise<void> {
+  const png = async (): Promise<Buffer> => Buffer.from(await m.screenshot())
+  const first = PNG_SIZE(await png())
+  // The hierarchy's units are the screenshot's pixels on Android, at the
+  // phone class's 420dpi: 2.625 to a point.
+  const density = ANDROID_PIXELS_PER_POINT
+  const frame = async (): Promise<
+    NonNullable<ReturnType<typeof bandFrameOf>>
+  > => {
+    const read = bandFrameOf(await m.hierarchy(), 'sticky')
+    if (read == null) throw new Error(`${name}: no sticky section on screen`)
+    return read
+  }
+  // From the top: a page that opens anchored starts pinned.
+  let now = await frame()
+  for (let i = 0; i < 20; i++) {
+    await m.dragPath({ points: ['2%, 30%', '2%, 85%'], duration: 400 })
+    await new Promise(resolve => setTimeout(resolve, 1200))
+    const after = await frame()
+    const still = Math.abs(after.bandTop - now.bandTop) < 1
+    now = after
+    if (still) break
+  }
+  const pinAt = now.bandTop - now.headerBottom
+  for (let step = 0; step < 40; step++) {
+    const shot = await png()
+    const expected = expectedPaneBottom(
+      { ...now, paneTop: 0, paneBottom: 0 },
+      pinAt
+    )
+    const seen = linesInColumn(shot, 6, Math.round(now.bandBottom + 8))
+    expect(seen, `${name} step ${step}: one line`).length(1)
+    expect(
+      Math.abs(seen[0] - expected),
+      `${name} step ${step}: the line where the scroll puts it`
+    ).lte(4)
+    await prove(ctx, m, `${name}-step-${String(step).padStart(2, '0')}.png`)
+    if (Math.abs(now.bandTop - now.headerBottom) <= 4) break
+    const from = 60
+    const to = from - ((40 * density) / first.height) * 100
+    await m.dragPath({
+      points: [`2%, ${from}%`, `2%, ${to.toFixed(3)}%`],
+      duration: 1500
+    })
+    now = await frame()
+  }
+  expect(Math.abs(now.bandTop - now.headerBottom)).lte(4)
+}
+
+/** A 420dpi Android phone, the class the scenario asks for. */
+const ANDROID_PIXELS_PER_POINT = 2.625
+
+/** A PNG's size, from its header. */
+function PNG_SIZE(png: Buffer): { width: number; height: number } {
+  return { width: png.readUInt32BE(16), height: png.readUInt32BE(20) }
 }
 
 const scenarios: Record<string, Scenario> = {
@@ -464,6 +676,102 @@ const scenarios: Record<string, Scenario> = {
     })
   }),
 
+  'sticky-sections-phone': on('web', async ctx => {
+    const session = await openWeb(
+      ctx,
+      PHONE,
+      `/seasons/${STICKY_SEASON}?tab=schedule`,
+      'sticky'
+    )
+    const { frames, top, pinAt } = await stepThrough(
+      ctx,
+      session,
+      false,
+      'sticky'
+    )
+    expect(frames).greaterThan(20)
+    await scrollTo(session, pinAt + 3 * STEP, 'sticky')
+    // Pinned: one pane from the top of the screen to the sections' lower
+    // edge, the section clear over it.
+    expect(top.paneGlass).equals(true)
+    expect(Math.abs((top.lineBottom ?? -1) - top.bandBottom)).lte(0.5)
+    await prove(ctx, session.m, 'web-season-sticky-pinned.png')
+    await ctx.checkpoint('season-pinned', {
+      expect: [{ id: 'sticky-section-glass' }]
+    })
+  }),
+
+  'umpire-stack-phone': on('web', async ctx => {
+    const session = await openWeb(
+      ctx,
+      PHONE,
+      `/umpires/${STICKY_LEAGUE}`,
+      'sticky'
+    )
+    const { frames, top, pinAt } = await stepThrough(
+      ctx,
+      session,
+      false,
+      'sticky'
+    )
+    expect(frames).greaterThan(5)
+    await scrollTo(session, pinAt + 3 * STEP, 'sticky')
+    // The glass covers the whole stack: the tabs, the Chat pill and the
+    // column headers, down to the headers' lower edge.
+    const stack = top.umpire
+    expect(stack, 'the umpire stack').not.equals(null)
+    expect(stack!.tabsTop).gte(top.headerBottom - 0.5)
+    expect(stack!.chatTop).gte(top.headerBottom - 0.5)
+    expect(Math.abs(top.paneBottom - top.bandBottom)).lte(0.5)
+    expect(stack!.columnsBottom).lte(top.paneBottom + 0.5)
+    expect(top.paneBottom - stack!.columnsBottom).lte(2)
+    expect(top.headerFilter).equals('none')
+    await prove(ctx, session.m, 'web-umpire-stack-pinned.png')
+    await ctx.checkpoint('umpire-pinned', {
+      expect: [{ id: 'umpire-sticky-stack' }]
+    })
+  }),
+
+  'sticky-sections-ios': on('ios', async ctx => {
+    const { m, screen, ids, open } = await openTessPhone(ctx)
+    await open(`seasons/${ids.season}?tab=schedule`)
+    await m.assertVisible({ text: 'Season sections', timeout: 30000 })
+    // Every game, past and to come, so the page is long enough to pin.
+    await m.tapOn({ text: 'All' })
+    await stickyOnIos(ctx, m, screen, 'ios-season')
+    await open(`umpires/${ids.league}`)
+    await m.assertVisible({ id: 'umpire-sticky-stack', timeout: 30000 })
+    // It opens at the next game, pinned: the steps start from the top.
+    await phoneToTop(m, screen, 'ios-umpire', 'sticky')
+    await stickyOnIos(ctx, m, screen, 'ios-umpire')
+    // Pinned again: the pane reaches the column headers' lower edge.
+    await stepOnPhone(
+      m,
+      screen,
+      'ios-umpire-pin',
+      async () => undefined,
+      true,
+      2,
+      'sticky'
+    )
+    const root = await m.hierarchy()
+    const frame = glassFrameOf(root, screen.height, 'sticky')!
+    const columns = boundsOf(root, 'umpire-table-header')!
+    expect(Math.abs(frame.paneBottom - (columns.y + columns.height))).lte(2)
+  }),
+
+  'sticky-sections-android': on('android', async ctx => {
+    const { m, open, ids } = await openTessPhone(ctx)
+    await open(`seasons/${ids.season}?tab=schedule`)
+    await m.assertVisible({ text: 'Season sections', timeout: 30000 })
+    // Every game, past and to come, so the page is long enough to pin.
+    await m.tapOn({ text: 'All' })
+    await stickyOnAndroid(ctx, m, 'android-season')
+    await open(`umpires/${ids.league}`)
+    await m.assertVisible({ id: 'umpire-sticky-stack', timeout: 30000 })
+    await stickyOnAndroid(ctx, m, 'android-umpire')
+  }),
+
   'pinned-band-ios': on('ios', async ctx => {
     const world = await ctx.fixture('coach-game')
     const app = await openCoachApp(ctx, 'coach')
@@ -515,6 +823,8 @@ export default defineE2e({
   kind: 'e2e',
   covers: [
     'src/app/components/AppHeader.tsx',
+    'src/app/components/StickySectionLayout.tsx',
+    'src/app/components/StickySectionLayout.native.tsx',
     'src/app/components/GlassView.tsx',
     'src/app/components/GlassView.native.tsx',
     'src/app/components/PinnedBands.tsx',
@@ -526,16 +836,19 @@ export default defineE2e({
     'src/app/navigation/sceneSlot.tsx'
   ],
   stack: 'isolated',
-  fixtures: ['coach-game'],
+  fixtures: ['coach-game', 'tess'],
   exclusive: false,
   surfaces: {
     'web-chromium': { devices: [] },
     'ios-app': {
       devices: [{ role: 'device', needs: ['ios-phone'], hardware: 'none' }]
+    },
+    'android-app': {
+      devices: [{ role: 'device', needs: ['android-phone'], hardware: 'none' }]
     }
   },
   services: ['api', 'web'],
-  apps: ['teamstation-ios'],
+  apps: ['teamstation-ios', 'teamstation-android'],
   secrets: [],
   costUsd: 0,
   minutes: 4,

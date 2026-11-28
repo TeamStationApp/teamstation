@@ -265,6 +265,8 @@
       "kind": "e2e",
       "covers": [
         "src/app/components/AppHeader.tsx",
+        "src/app/components/StickySectionLayout.tsx",
+        "src/app/components/StickySectionLayout.native.tsx",
         "src/app/components/GlassView.tsx",
         "src/app/components/GlassView.native.tsx",
         "src/app/components/PinnedBands.tsx",
@@ -277,7 +279,8 @@
       ],
       "stack": "isolated",
       "fixtures": [
-        "coach-game"
+        "coach-game",
+        "tess"
       ],
       "exclusive": false,
       "surfaces": {
@@ -294,6 +297,17 @@
               "hardware": "none"
             }
           ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
         }
       },
       "services": [
@@ -301,7 +315,8 @@
         "web"
       ],
       "apps": [
-        "teamstation-ios"
+        "teamstation-ios",
+        "teamstation-android"
       ],
       "secrets": [],
       "costUsd": 0,
@@ -323,6 +338,8 @@
       "kind": "e2e",
       "covers": [
         "src/app/components/AppHeader.tsx",
+        "src/app/components/StickySectionLayout.tsx",
+        "src/app/components/StickySectionLayout.native.tsx",
         "src/app/components/GlassView.tsx",
         "src/app/components/GlassView.native.tsx",
         "src/app/components/PinnedBands.tsx",
@@ -335,7 +352,8 @@
       ],
       "stack": "isolated",
       "fixtures": [
-        "coach-game"
+        "coach-game",
+        "tess"
       ],
       "exclusive": false,
       "surfaces": {
@@ -352,6 +370,17 @@
               "hardware": "none"
             }
           ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
         }
       },
       "services": [
@@ -359,7 +388,8 @@
         "web"
       ],
       "apps": [
-        "teamstation-ios"
+        "teamstation-ios",
+        "teamstation-android"
       ],
       "secrets": [],
       "costUsd": 0,
@@ -381,6 +411,8 @@
       "kind": "e2e",
       "covers": [
         "src/app/components/AppHeader.tsx",
+        "src/app/components/StickySectionLayout.tsx",
+        "src/app/components/StickySectionLayout.native.tsx",
         "src/app/components/GlassView.tsx",
         "src/app/components/GlassView.native.tsx",
         "src/app/components/PinnedBands.tsx",
@@ -393,7 +425,8 @@
       ],
       "stack": "isolated",
       "fixtures": [
-        "coach-game"
+        "coach-game",
+        "tess"
       ],
       "exclusive": false,
       "surfaces": {
@@ -410,6 +443,17 @@
               "hardware": "none"
             }
           ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
         }
       },
       "services": [
@@ -417,7 +461,8 @@
         "web"
       ],
       "apps": [
-        "teamstation-ios"
+        "teamstation-ios",
+        "teamstation-android"
       ],
       "secrets": [],
       "costUsd": 0,
@@ -439,6 +484,8 @@
       "kind": "e2e",
       "covers": [
         "src/app/components/AppHeader.tsx",
+        "src/app/components/StickySectionLayout.tsx",
+        "src/app/components/StickySectionLayout.native.tsx",
         "src/app/components/GlassView.tsx",
         "src/app/components/GlassView.native.tsx",
         "src/app/components/PinnedBands.tsx",
@@ -451,7 +498,8 @@
       ],
       "stack": "isolated",
       "fixtures": [
-        "coach-game"
+        "coach-game",
+        "tess"
       ],
       "exclusive": false,
       "surfaces": {
@@ -468,6 +516,17 @@
               "hardware": "none"
             }
           ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
         }
       },
       "services": [
@@ -475,7 +534,300 @@
         "web"
       ],
       "apps": [
-        "teamstation-ios"
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [
+        "layout-shift",
+        "hidden-element",
+        "blank-screen"
+      ],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/header/glass-growth",
+      "file": "e2e/tests/app-shell/header/glass-growth.e2e.ts"
+    },
+    {
+      "id": "app-shell/header/glass-growth#sticky-sections-android",
+      "title": "The header’s glass grows down over a pinned pill band with the scroll, and hands its line over",
+      "kind": "e2e",
+      "covers": [
+        "src/app/components/AppHeader.tsx",
+        "src/app/components/StickySectionLayout.tsx",
+        "src/app/components/StickySectionLayout.native.tsx",
+        "src/app/components/GlassView.tsx",
+        "src/app/components/GlassView.native.tsx",
+        "src/app/components/PinnedBands.tsx",
+        "src/app/components/pinnedGlass.ts",
+        "src/app/components/pinnedHead.ts",
+        "src/app/components/sceneTop.ts",
+        "src/app/components/usePinnedHead.ts",
+        "src/app/components/usePinnedHead.native.ts",
+        "src/app/navigation/sceneSlot.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game",
+        "tess"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "api",
+        "web"
+      ],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [
+        "layout-shift",
+        "hidden-element",
+        "blank-screen"
+      ],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/header/glass-growth",
+      "file": "e2e/tests/app-shell/header/glass-growth.e2e.ts"
+    },
+    {
+      "id": "app-shell/header/glass-growth#sticky-sections-ios",
+      "title": "The header’s glass grows down over a pinned pill band with the scroll, and hands its line over",
+      "kind": "e2e",
+      "covers": [
+        "src/app/components/AppHeader.tsx",
+        "src/app/components/StickySectionLayout.tsx",
+        "src/app/components/StickySectionLayout.native.tsx",
+        "src/app/components/GlassView.tsx",
+        "src/app/components/GlassView.native.tsx",
+        "src/app/components/PinnedBands.tsx",
+        "src/app/components/pinnedGlass.ts",
+        "src/app/components/pinnedHead.ts",
+        "src/app/components/sceneTop.ts",
+        "src/app/components/usePinnedHead.ts",
+        "src/app/components/usePinnedHead.native.ts",
+        "src/app/navigation/sceneSlot.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game",
+        "tess"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "api",
+        "web"
+      ],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [
+        "layout-shift",
+        "hidden-element",
+        "blank-screen"
+      ],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/header/glass-growth",
+      "file": "e2e/tests/app-shell/header/glass-growth.e2e.ts"
+    },
+    {
+      "id": "app-shell/header/glass-growth#sticky-sections-phone",
+      "title": "The header’s glass grows down over a pinned pill band with the scroll, and hands its line over",
+      "kind": "e2e",
+      "covers": [
+        "src/app/components/AppHeader.tsx",
+        "src/app/components/StickySectionLayout.tsx",
+        "src/app/components/StickySectionLayout.native.tsx",
+        "src/app/components/GlassView.tsx",
+        "src/app/components/GlassView.native.tsx",
+        "src/app/components/PinnedBands.tsx",
+        "src/app/components/pinnedGlass.ts",
+        "src/app/components/pinnedHead.ts",
+        "src/app/components/sceneTop.ts",
+        "src/app/components/usePinnedHead.ts",
+        "src/app/components/usePinnedHead.native.ts",
+        "src/app/navigation/sceneSlot.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game",
+        "tess"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "api",
+        "web"
+      ],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [
+        "layout-shift",
+        "hidden-element",
+        "blank-screen"
+      ],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/header/glass-growth",
+      "file": "e2e/tests/app-shell/header/glass-growth.e2e.ts"
+    },
+    {
+      "id": "app-shell/header/glass-growth#umpire-stack-phone",
+      "title": "The header’s glass grows down over a pinned pill band with the scroll, and hands its line over",
+      "kind": "e2e",
+      "covers": [
+        "src/app/components/AppHeader.tsx",
+        "src/app/components/StickySectionLayout.tsx",
+        "src/app/components/StickySectionLayout.native.tsx",
+        "src/app/components/GlassView.tsx",
+        "src/app/components/GlassView.native.tsx",
+        "src/app/components/PinnedBands.tsx",
+        "src/app/components/pinnedGlass.ts",
+        "src/app/components/pinnedHead.ts",
+        "src/app/components/sceneTop.ts",
+        "src/app/components/usePinnedHead.ts",
+        "src/app/components/usePinnedHead.native.ts",
+        "src/app/navigation/sceneSlot.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game",
+        "tess"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        },
+        "android-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "api",
+        "web"
+      ],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android"
       ],
       "secrets": [],
       "costUsd": 0,

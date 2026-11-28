@@ -1,6 +1,7 @@
-import React from 'react'
-import { View } from 'react-native'
+import React, { useCallback, useEffect, useLayoutEffect, useRef } from 'react'
+import { useWindowDimensions, View } from 'react-native'
 import Animated, {
+  useAnimatedReaction,
   useAnimatedScrollHandler,
   useAnimatedStyle,
   useComposedEventHandler,
@@ -10,16 +11,27 @@ import { scheduleOnRN } from 'react-native-worklets'
 
 import { edgeMarginRem } from '../layout/margins'
 import { useInsets } from '../platform/safeArea'
-import { useTheme } from '../theme/ThemeContext'
+import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { ContentInsetContext } from './contentInset'
+import { GlassView } from './GlassView'
 import { useHeaderSlot } from './headerSlot'
 import { useNavAnimatedScroll, useNavCompactScroll } from './navCompact'
 import { pageScroller } from './PageScrollView'
+import { markPinned, usePinned } from './pinnedGlass'
+import { glassGrowth } from './pinnedHead'
+import { useSceneTop } from './sceneTop'
 import { useScreenBottom } from './Screen'
 import type { StickySectionLayoutProps } from './stickySectionLayoutProps'
 import { useBreakpoint } from './useBreakpoint'
 
-/** Native counterpart of CSS sticky, measured against the overlaid header. */
+/**
+ * Native counterpart of CSS sticky, measured against the overlaid header.
+ * The section carries the header's glass down over itself as it comes, as
+ * the browser's does: one pane from the top of the screen, growing from the
+ * header's lower edge over the last section-height of the scroll and
+ * reaching the section's lower edge as it pins (`glassGrowth`), driven on
+ * the UI thread from the scroll.
+ */
 export function StickySectionLayout({
   hero,
   sections,
@@ -31,6 +43,8 @@ export function StickySectionLayout({
   pagedList
 }: StickySectionLayoutProps): React.ReactElement {
   const theme = useTheme()
+  const styles = getStyles(theme)
+  const { width } = useWindowDimensions()
   const { headerHeight } = useHeaderSlot()
   const breakpoint = useBreakpoint()
   const insets = useInsets()
@@ -65,6 +79,59 @@ export function StickySectionLayout({
       }
     ]
   }))
+  // Whether the pane has started to grow down from the header
+  // (`pinnedGlass`), reported only while this scene is the stack's top: a
+  // section pinned beneath a pushed screen leaves that screen's header alone.
+  const glassKey = useRef({}).current
+  /** What the reaction last said: it says nothing again after a Back. */
+  const grown = useRef(false)
+  const top = useSceneTop()
+  const topRef = useRef(top)
+  topRef.current = top
+  const carried = usePinned(glassKey)
+  useLayoutEffect(() => {
+    markPinned(glassKey, grown.current && top)
+  }, [glassKey, top])
+  useEffect(
+    () => () => {
+      markPinned(glassKey, false)
+    },
+    [glassKey]
+  )
+  // Through a function made here: an object handed to the JS thread arrives
+  // as a copy, which is not the key the section looks itself up by.
+  const reportGrown = useCallback(
+    (on: boolean): void => {
+      grown.current = on
+      markPinned(glassKey, on && topRef.current)
+    },
+    [glassKey]
+  )
+  useAnimatedReaction(
+    () =>
+      glassGrowth(
+        { y: scrollY.value, collapse: sectionTop.value - headerHeight },
+        sectionTop.value - headerHeight,
+        sectionHeight.value
+      ).progress > 0,
+    (now, before) => {
+      if (now !== before) scheduleOnRN(reportGrown, now)
+    }
+  )
+  // The pane of the header's glass, frame by frame with the page.
+  const glassStyle = useAnimatedStyle(() => {
+    const pinAt = sectionTop.value - headerHeight
+    const height = sectionHeight.value
+    const { reach, progress } = glassGrowth(
+      { y: scrollY.value, collapse: pinAt },
+      pinAt,
+      height
+    )
+    return {
+      top: -(headerHeight + reach),
+      height: headerHeight + progress * height
+    }
+  })
   const Scroller = pageScroller(pagedList)
   return (
     <Scroller
@@ -107,11 +174,29 @@ export function StickySectionLayout({
               {
                 zIndex: 3,
                 elevation: 3,
-                backgroundColor: theme.backgroundColor
+                backgroundColor: carried ? 'transparent' : theme.backgroundColor
               },
               pegStyle
             ]}
           >
+            {/*
+              Placed and sized from the scroll; the glass itself is drawn
+              only while the header has handed its own over. The section is
+              only as wide as its column, so the pane reaches a window's
+              width past it each way and the scroller clips it.
+            */}
+            <Animated.View
+              testID="sticky-section-glass"
+              pointerEvents="none"
+              style={[styles.pane, { left: -width, right: -width }, glassStyle]}
+            >
+              {carried && (
+                <>
+                  <GlassView style={styles.fill} />
+                  <View style={styles.edge} />
+                </>
+              )}
+            </Animated.View>
             {sections}
           </Animated.View>
           {children}
@@ -120,3 +205,25 @@ export function StickySectionLayout({
     </Scroller>
   )
 }
+
+const getStyles = cacheStyles((theme: Theme) => ({
+  pane: {
+    position: 'absolute'
+  },
+  fill: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
+    right: 0
+  },
+  // The header's lower line, carried down at the glass's lower edge.
+  edge: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: 1,
+    backgroundColor: theme.glassBorderColor
+  }
+}))
