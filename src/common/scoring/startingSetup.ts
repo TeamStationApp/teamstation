@@ -1,4 +1,5 @@
 import type { GameDetail, RosterEntry } from '../api'
+import type { NamedSides } from '../openSides'
 import type { Unrostered } from '../unroster'
 import { asGumboId } from '../userId'
 import type { ScoringAction } from './actions'
@@ -23,15 +24,20 @@ import {
   type Side
 } from './state'
 
-/** What of a game names its two teams. */
-export type GameTeams = Pick<
-  GameDetail,
-  | 'awayTeamId'
-  | 'awayTeamName'
-  | 'awayLogoUrl'
-  | 'homeTeamId'
-  | 'homeTeamName'
-  | 'homeLogoUrl'
+/**
+ * What of a game names its two teams. Scoring opens only a game whose sides
+ * are both named.
+ */
+export type GameTeams = NamedSides<
+  Pick<
+    GameDetail,
+    | 'awayTeamId'
+    | 'awayTeamName'
+    | 'awayLogoUrl'
+    | 'homeTeamId'
+    | 'homeTeamName'
+    | 'homeLogoUrl'
+  >
 >
 
 export function teamsOf(game: GameTeams): Record<Side, GameTeam> {

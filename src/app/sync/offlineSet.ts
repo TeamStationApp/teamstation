@@ -6,14 +6,16 @@ import type {
   UserTopic,
   UserTopicListener
 } from '../../common/gameSocket'
+import { namedTeamIds } from '../../common/openSides'
 import { managesRoster } from '../../common/roles'
 
 /** One game the server chose for this phone to keep for scoring. */
 export interface OfflineManifestGame {
   id: string
   startAt: string
-  homeTeamId: string
-  awayTeamId: string
+  /** Null for an open side; the server leaves an open game out. */
+  homeTeamId: string | null
+  awayTeamId: string | null
   started: boolean
   schedule: SeasonGame | null
 }
@@ -109,10 +111,10 @@ function rosteredTeams(game: OfflineManifestGame): string[] {
     home: game.schedule?.homeTeamExternal === true,
     away: game.schedule?.awayTeamExternal === true
   }
-  return [
-    ...(external.home ? [] : [game.homeTeamId]),
-    ...(external.away ? [] : [game.awayTeamId])
-  ]
+  return namedTeamIds(
+    external.home ? null : game.homeTeamId,
+    external.away ? null : game.awayTeamId
+  )
 }
 
 /** Whether the plays were scored against these lineups, as far as both say. */

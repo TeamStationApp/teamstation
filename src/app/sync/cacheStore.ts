@@ -806,7 +806,8 @@ function transactionOf(tx: SqlTransaction): CacheTransaction {
     },
     scheduleTeamNames: async teamIds => {
       const names: Record<string, string> = {}
-      const wanted = [...new Set(teamIds)]
+      // An open side (`''`) names no team.
+      const wanted = [...new Set(teamIds)].filter(id => id !== '')
       for (let at = 0; at < wanted.length; at += SQL_CHUNK) {
         const chunk = wanted.slice(at, at + SQL_CHUNK)
         const marks = chunk.map(() => '?').join(', ')

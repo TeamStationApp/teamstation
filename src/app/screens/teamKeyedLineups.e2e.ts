@@ -27,6 +27,7 @@ import {
   writeArtifactsTo
 } from '../../../e2e/rigs/scoringBrowser'
 import { GAME_SOCKET_PROTOCOL, PROTOCOL_HEADER } from '../../common/gameSocket'
+import { withNamedSides } from '../../common/openSides'
 import type { ScoringAction } from '../../common/scoring/actions'
 import type { LineupFixture } from '../../server/dev/lineupFixture'
 
@@ -332,7 +333,7 @@ describe('team-keyed lineups, and reset with swap', function () {
       from games where id = $1`
     await query(swapFile, state, [other.gameId])
     const scorekeeper = await clientOf(other, 'scorekeeper')
-    const read = await scorekeeper.game(other.gameId)
+    const read = withNamedSides(await scorekeeper.game(other.gameId))
     await scorekeeper.swapGameSides(other.gameId, {
       homeTeamId: read.homeTeamId,
       awayTeamId: read.awayTeamId

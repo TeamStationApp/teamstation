@@ -10,6 +10,7 @@ import {
   type TeamStationClient
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
+import { withNamedSides } from '../../common/openSides'
 import {} from '../../common/scoring/gumbo'
 import { playsLost } from '../../common/scoring/playsLost'
 import {
@@ -406,8 +407,8 @@ describe('saving from the scoring screen', function () {
       open: async (game, away, home) =>
         await GameSession.open(store, game.id, {
           gamePk: game.id,
-          teams: teamsOf(game),
-          setup: startingSetup(game, away, home)
+          teams: teamsOf(withNamedSides(game)),
+          setup: startingSetup(withNamedSides(game), away, home)
         })
     }
     await mount(client, source)
@@ -441,8 +442,8 @@ describe('saving from the scoring screen', function () {
       open: async (game, away, home) => {
         const session = await GameSession.open(store, game.id, {
           gamePk: game.id,
-          teams: teamsOf(game),
-          setup: startingSetup(game, away, home)
+          teams: teamsOf(withNamedSides(game)),
+          setup: startingSetup(withNamedSides(game), away, home)
         })
         // The server's copy of a new game reads back with its players in
         // another order, so the first read after a save finds the game
@@ -766,8 +767,8 @@ describe('saving from the scoring screen', function () {
           game.id,
           {
             gamePk: game.id,
-            teams: teamsOf(game),
-            setup: startingSetup(game, away, home)
+            teams: teamsOf(withNamedSides(game)),
+            setup: startingSetup(withNamedSides(game), away, home)
           },
           { now: () => clock.now() }
         )
@@ -991,7 +992,11 @@ describe('swapping from the scoring menu', function () {
             return await store.save(id, change)
           }
         }
-        const session = await GameSession.open(read, 'g1', context(detail))
+        const session = await GameSession.open(
+          read,
+          'g1',
+          context(withNamedSides(detail))
+        )
         if (options.pendingAfterFlush === true) {
           session.flush = async () => undefined
           Object.defineProperty(session, 'pending', { get: () => 1 })

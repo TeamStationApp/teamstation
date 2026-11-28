@@ -149,6 +149,8 @@ describe('TV replay statistics source', () => {
         home: { ...lineups.home, current: null }
       })
     ).equals(null)
+    // A game with an open side has no box.
+    expect(startingBox({ ...game, awayTeamId: null }, lineups)).equals(null)
   })
   it('keeps explicitly named unregistered starters without inventing an account', () => {
     const lineup = structuredClone(lineups)

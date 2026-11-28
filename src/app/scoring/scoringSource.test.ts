@@ -10,6 +10,7 @@ import {
   TeamStationClient
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
+import { withNamedSides } from '../../common/openSides'
 import {} from '../../common/scoring/gumbo'
 import { ScoringSession } from '../../common/scoring/session'
 import { type Position, POSITIONS, setupOf } from '../../common/scoring/state'
@@ -20,28 +21,32 @@ import {
   defaultsOf,
   DevelopmentScoringSource,
   memoryStore,
+  namedSides,
+  OpenSidesError,
   ServerScoringSource
 } from './scoringSource'
 import { ServerClock } from './serverClock'
 
-const game = asGameDetail({
-  nonMemberView: false,
-  id: 'g1',
-  awayTeamId: 'away',
-  homeTeamId: 'home',
-  awayTeamName: 'Owls',
-  homeTeamName: 'Hawks',
-  seasonId: null,
-  startAt: null,
-  venue: null,
-  status: 'scheduled',
-  homeScore: null,
-  awayScore: null,
-  ingestStatus: 'pending',
-  ingestMessage: null,
-  canScore: true,
-  videos: []
-})
+const game = withNamedSides(
+  asGameDetail({
+    nonMemberView: false,
+    id: 'g1',
+    awayTeamId: 'away',
+    homeTeamId: 'home',
+    awayTeamName: 'Owls',
+    homeTeamName: 'Hawks',
+    seasonId: null,
+    startAt: null,
+    venue: null,
+    status: 'scheduled',
+    homeScore: null,
+    awayScore: null,
+    ingestStatus: 'pending',
+    ingestMessage: null,
+    canScore: true,
+    videos: []
+  })
+)
 const roster = (first: number): RosterEntry[] =>
   Array.from({ length: 9 }, (_, i) =>
     asRosterEntry({
@@ -344,6 +349,30 @@ describe('the server scoring source with default lineups (U12)', function () {
     ])
     const empty = await source.open(game, away, home)
     await source.saveTag(empty, 'missing_target', null, 'actor')
+  })
+})
+
+describe('a game with an open side', function () {
+  it('is told from a game whose sides are both named', function () {
+    expect(namedSides(game)).equals(true)
+    expect(namedSides({ ...game, awayTeamId: null })).equals(false)
+    expect(namedSides({ ...game, homeTeamId: null })).equals(false)
+  })
+
+  it('is refused by both sources with the game they read', async function () {
+    const open = { ...game, awayTeamId: null }
+    for (const source of [
+      new ServerScoringSource(client(async () => none).client),
+      new DevelopmentScoringSource()
+    ]) {
+      const refused: unknown = await source.open(open, [], []).then(
+        () => undefined,
+        (caught: unknown) => caught
+      )
+      expect(refused).instanceOf(OpenSidesError)
+      expect((refused as OpenSidesError).game).equals(open)
+      expect((refused as OpenSidesError).message).includes('TBD')
+    }
   })
 })
 

@@ -144,7 +144,7 @@ export function winnerOf(game: ScoredGame): 'away' | 'home' | undefined {
  * still being played has a score and no winner yet, so it gets no result.
  */
 export function resultFor(
-  game: ScoredGame & { homeTeamId: string; awayTeamId: string },
+  game: ScoredGame & { homeTeamId: string | null; awayTeamId: string | null },
   teamId: string
 ): { label: string; tone: 'win' | 'loss' | 'neutral' } | undefined {
   if (game.status !== 'final') return undefined
@@ -157,6 +157,22 @@ export function resultFor(
   return ours > theirs
     ? { label: `W ${ours}–${theirs}`, tone: 'win' }
     : { label: `L ${ours}–${theirs}`, tone: 'loss' }
+}
+
+/**
+ * A game's named teams with their names, home first: an open (TBD) side has
+ * no team, so no membership, page or cache is asked of it.
+ */
+export function namedTeamsOf(game: {
+  homeTeamId: string | null
+  awayTeamId: string | null
+  homeTeamName: string
+  awayTeamName: string
+}): Array<{ id: string; name: string }> {
+  return [
+    { id: game.homeTeamId, name: game.homeTeamName },
+    { id: game.awayTeamId, name: game.awayTeamName }
+  ].flatMap(team => (team.id == null ? [] : [{ id: team.id, name: team.name }]))
 }
 
 /** `1h 24m`, `58m`, or nothing. */
@@ -200,8 +216,9 @@ export function matchupTitle(lines: { first: string; second: string }): string {
  */
 export function matchupLines(
   game: {
-    homeTeamId: string
-    awayTeamId: string
+    /** Null for an open side, whose name the server sends as TBD. */
+    homeTeamId: string | null
+    awayTeamId: string | null
     homeTeamName: string
     awayTeamName: string
     eventKind?: 'game' | 'event'

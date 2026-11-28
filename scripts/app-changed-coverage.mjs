@@ -137,6 +137,9 @@ const check = spawnSync(
     // Tess's client shapes, which every importer takes as `import type`.
     '--exclude',
     'src/app/tess/tessTypes.ts',
+    // What the scoring screen read as it opened a game: a type only.
+    '--exclude',
+    'src/app/scoring/scoringReads.ts',
     // TurboModule specs: codegen reads them, and loading one needs React
     // Native's native side, which no test here has.
     '--exclude',

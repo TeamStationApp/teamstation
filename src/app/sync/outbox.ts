@@ -10,6 +10,7 @@ import {
   tagMetadata
 } from '../../common/eventTags'
 import type { CurrentPlay, GumboPlay } from '../../common/gumboPlay'
+import { storedSideId } from '../../common/openSides'
 import {
   placeholderSuffix,
   placeholderTeamName
@@ -2552,10 +2553,11 @@ export class Outbox {
     side: 'away' | 'home',
     userId: string
   ): Promise<number | undefined> {
-    const teamId = game[side === 'home' ? 'homeTeamId' : 'awayTeamId']
+    // An open side has no roster on the phone.
+    const teamId = storedSideId(game[`${side}TeamId`])
     const guests = ((game.guestPlayers ?? {}) as Json)[side]
     const lists: Json[][] = [Array.isArray(guests) ? guests.filter(isJson) : []]
-    if (typeof teamId === 'string')
+    if (teamId != null)
       for (const key of [rosterKey(teamId), fullRosterKey(teamId)]) {
         const document = await tx.read(key)
         if (document != null) lists.push(listOf(document.body))
@@ -2773,8 +2775,8 @@ export class Outbox {
     for (const side of ['away', 'home'] as const) {
       const guests = ((game.guestPlayers ?? {}) as Json)[side]
       if (Array.isArray(guests)) lists.push(guests.filter(isJson))
-      const teamId = game[side === 'home' ? 'homeTeamId' : 'awayTeamId']
-      if (typeof teamId === 'string')
+      const teamId = storedSideId(game[`${side}TeamId`])
+      if (teamId != null)
         for (const key of [rosterKey(teamId), fullRosterKey(teamId)]) {
           const document = await tx.read(key)
           if (document != null) lists.push(listOf(document.body))

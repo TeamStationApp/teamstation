@@ -580,6 +580,29 @@ describe('scheduleUi.test.tsx', () => {
       Linking.openURL = previous
     }
   })
+  it('names an open side TBD with no team link, and keeps the named side’s', async () => {
+    const f = fixture()
+    const opened: string[] = []
+    Object.assign(f.schedule.games[0], {
+      homeTeamId: 'hawks',
+      awayTeamId: null,
+      away: 'TBD'
+    })
+    await mount(
+      <UmpireScheduleScreen
+        client={f.client}
+        route={{ name: 'umpireSchedule', id: 'demo' }}
+        leagues={[]}
+        onRoute={() => undefined}
+        onOpenTeam={id => opened.push(id)}
+        onOpenGame={id => opened.push(id)}
+      />
+    )
+    expect(document.body.textContent).contains('TBD')
+    expect(document.querySelector('[aria-label="Open TBD"]')).equals(null)
+    await press('Open Demo Hawks')
+    expect(opened).deep.equals(['hawks'])
+  })
   it('positions an ongoing game before future games, with a last-row fallback', () => {
     const game = fixture().schedule.games[0]
     const ongoing = {

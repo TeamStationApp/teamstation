@@ -185,6 +185,8 @@ import {
   defaultsOf,
   DevelopmentScoringSource,
   type HeldOpening,
+  namedSides,
+  scoredGame,
   type ScoringSource
 } from './scoringSource'
 import {
@@ -207,6 +209,7 @@ import {
 } from './scoringTypes'
 import {
   type GameReplaced,
+  type GameSidesRead,
   type OpenedGame,
   replacedNotice,
   useGameReplaced
@@ -456,7 +459,10 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
       // on a working connection it comes first, so a new game starts from
       // its rosters and defaults; a stalled server costs no more than that.
       const alone = { gameId: props.gameId, waitMs: DEFAULT_LINEUP_WAIT_MS }
-      const game = await props.client.game(props.gameId, { storedFirst: true })
+      // A game with an open side is not scored here yet.
+      const game = scoredGame(
+        await props.client.game(props.gameId, { storedFirst: true })
+      )
       const roles = await props.client
         .myRoles({ storedOrNothing: alone })
         .catch(() => undefined)
@@ -931,8 +937,10 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
     swapped: QueuedSwap['swapped']
   ): SwappedOpening | undefined => {
     const shown = shownReads.current
+    const game = swapped?.game
+    // A swap names the sides of the game this screen opened: never open.
     const opening: { reads: OpenedReads; held: HeldOpening } | undefined =
-      swapped == null || shown == null
+      swapped == null || shown == null || game == null || !namedSides(game)
         ? undefined
         : (() => {
             const defaults = {
@@ -946,7 +954,7 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
             return {
               reads: {
                 ...shown,
-                game: swapped.game,
+                game,
                 rights: rightsRef.current,
                 // As the screen holds them now: a player added since is on.
                 rosters: Object.fromEntries(
@@ -964,7 +972,7 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
     return { ...opening, away, home }
   }
   const readSides = useCallback(
-    async (): Promise<OpenedGame> => await props.client.game(props.gameId),
+    async (): Promise<GameSidesRead> => await props.client.game(props.gameId),
     [props.client, props.gameId]
   )
   // While the queue still holds a swap of this game, the server's copy has

@@ -16,6 +16,7 @@ import {
 import { asGameDetail, asRosterEntry } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import { shortName } from '../../common/names'
+import { withNamedSides } from '../../common/openSides'
 import type { ScoringAction } from '../../common/scoring/actions'
 import { sameScoringMutation } from '../../common/scoring/scoringMutation'
 import {
@@ -345,7 +346,7 @@ async function open(fixture: Fixture = {}): Promise<{
       currentPlay: withNames(held.currentPlay, names)
     }
   }
-  const fixtureGame = asGameDetail(game)
+  const fixtureGame = withNamedSides(asGameDetail(game))
   const context = {
     gamePk: 'g1',
     teams: teamsOf(fixtureGame),

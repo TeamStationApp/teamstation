@@ -12,6 +12,7 @@ import { applyFieldCamera } from '../../app/field/cameraModel'
 import { BASES } from '../../app/field/fieldModel'
 import { TeamStationClient } from '../../common/api'
 import { HttpError } from '../../common/errors'
+import { withNamedSides } from '../../common/openSides'
 import { gamePlayerNames } from '../../common/replay/replayNames'
 import { replayPlays } from '../../common/scoring/gumbo'
 import { scoreboardOfGame } from '../../common/scoring/scoreboardOf'
@@ -70,7 +71,7 @@ export class ConcurrentScoringRig {
       account.password
     )
     this.api.token = signed.token
-    const game = await this.api.game(this.fixture.ids.game)
+    const game = withNamedSides(await this.api.game(this.fixture.ids.game))
     const [away, home] = await Promise.all([
       this.api.roster(game.awayTeamId),
       this.api.roster(game.homeTeamId)

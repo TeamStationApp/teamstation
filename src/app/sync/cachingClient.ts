@@ -19,6 +19,7 @@ import {
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import type { GameSocket } from '../../common/gameSocket'
+import { namedTeamIds, storedSideId } from '../../common/openSides'
 import type { StoredGame } from '../../common/scoring/session'
 import type { SwapDocumentsEffect } from '../../common/scoring/swapDocuments'
 import {
@@ -26,7 +27,7 @@ import {
   olderSaveFoldsAlike,
   rebuildGameEvents
 } from '../scoring/scoringSource'
-import { matchupLines, matchupTitle } from '../screens/format'
+import { matchupLines, matchupTitle, namedTeamsOf } from '../screens/format'
 import { deleteDocumentCaches } from './cache'
 import {
   type CacheTransaction,
@@ -696,8 +697,7 @@ export class CachingClient extends TeamStationClient {
       const game = details[index]
       if (game == null) return
       names[`game:${edit.id}`] = matchupTitle(matchupLines(game))
-      sides.set(game.homeTeamId, game.homeTeamName)
-      sides.set(game.awayTeamId, game.awayTeamName)
+      for (const team of namedTeamsOf(game)) sides.set(team.id, team.name)
     })
     const unnamed: string[] = []
     for (const id of teamIds) {
@@ -1450,16 +1450,15 @@ export class CachingClient extends TeamStationClient {
     const listed = games.flatMap(raw => {
       if (raw == null || typeof raw !== 'object') return []
       const game = raw as Record<string, unknown>
-      return [
-        ...(game.homeTeamExternal === true &&
-        typeof game.homeTeamId === 'string'
-          ? [game.homeTeamId]
-          : []),
-        ...(game.awayTeamExternal === true &&
-        typeof game.awayTeamId === 'string'
-          ? [game.awayTeamId]
-          : [])
-      ]
+      // An open side (`''`) is no placeholder team.
+      return namedTeamIds(
+        game.homeTeamExternal === true
+          ? (storedSideId(game.homeTeamId) ?? null)
+          : null,
+        game.awayTeamExternal === true
+          ? (storedSideId(game.awayTeamId) ?? null)
+          : null
+      )
     })
     if (listed.length === 0) return
     try {

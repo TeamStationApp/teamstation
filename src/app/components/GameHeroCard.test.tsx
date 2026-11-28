@@ -223,4 +223,36 @@ describe('GameHeroCard', function () {
     })
     expect(opened).deep.equals(['home'])
   })
+
+  it('draws an open side as TBD with no team link, logo or colour', async function () {
+    const opened: string[] = []
+    const container = await render(
+      <GameHeroCard
+        {...oct4}
+        awayTeamId={null}
+        awayName="TBD"
+        onOpenAwayTeam={() => opened.push('away')}
+        onOpenHomeTeam={() => opened.push('home')}
+      />
+    )
+    expect(leaf(container, 'TBD')).not.equals(undefined)
+    // The logo it was handed is not drawn, and its tile takes no team's colour.
+    expect(container.innerHTML).not.includes('badgers.png')
+    const tint = hex(getComputedStyle(tileOf(container, 'TB')).backgroundColor)
+    expect(tint).not.equals(teamTint(oct4.awayTeamId))
+    expect(tint).not.equals(teamTint(''))
+    // Nothing of the open side answers a press; the named side still does.
+    expect(container.querySelector('[aria-label="TBD"]')).equals(null)
+    await act(async () => {
+      leaf(container, 'TBD')?.click()
+    })
+    expect(opened).deep.equals([])
+    const home = container.querySelector<HTMLElement>(
+      '[aria-label="Amber Gardens"]'
+    )
+    await act(async () => {
+      home?.click()
+    })
+    expect(opened).deep.equals(['home'])
+  })
 })

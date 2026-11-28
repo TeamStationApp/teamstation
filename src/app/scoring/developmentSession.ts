@@ -1,6 +1,7 @@
-import type { GameDetail, RosterEntry } from '../../common/api'
+import type { RosterEntry } from '../../common/api'
 import { addPlayer, freshGame } from '../../common/scoring/rules'
 import { startingSetup, teamsOf } from '../../common/scoring/startingSetup'
+import type { NamedGameDetail } from './scoringSource'
 import type { ScoringSessionState, Side } from './scoringTypes'
 
 export {
@@ -11,7 +12,7 @@ export {
 
 /** A game scored here and kept nowhere: the field preview and the tests. */
 export function createDevelopmentSession(
-  game: GameDetail,
+  game: NamedGameDetail,
   away: RosterEntry[],
   home: RosterEntry[]
 ): ScoringSessionState {

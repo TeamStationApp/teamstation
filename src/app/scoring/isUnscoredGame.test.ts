@@ -2,28 +2,31 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { asGameDetail } from '../../common/api'
+import { withNamedSides } from '../../common/openSides'
 import { isUnscoredGame, scoringEntry } from './isUnscoredGame'
 
-export const gameFixture = asGameDetail({
-  nonMemberView: false,
-  id: 'g1',
-  awayTeamId: 'away',
-  homeTeamId: 'home',
-  awayTeamName: 'Owls',
-  homeTeamName: 'Hawks',
-  seasonId: null,
-  startAt: null,
-  venue: null,
-  status: 'scheduled',
-  homeScore: null,
-  awayScore: null,
-  ingestStatus: 'pending',
-  ingestMessage: null,
-  // Seen by a scorekeeper, so the Score Game tab is on offer.
-  canScore: true,
-  assignedRoles: { away: [], home: ['scorekeeper'] },
-  videos: []
-})
+export const gameFixture = withNamedSides(
+  asGameDetail({
+    nonMemberView: false,
+    id: 'g1',
+    awayTeamId: 'away',
+    homeTeamId: 'home',
+    awayTeamName: 'Owls',
+    homeTeamName: 'Hawks',
+    seasonId: null,
+    startAt: null,
+    venue: null,
+    status: 'scheduled',
+    homeScore: null,
+    awayScore: null,
+    ingestStatus: 'pending',
+    ingestMessage: null,
+    // Seen by a scorekeeper, so the Score Game tab is on offer.
+    canScore: true,
+    assignedRoles: { away: [], home: ['scorekeeper'] },
+    videos: []
+  })
+)
 describe('unscored entry', function () {
   it('requires all three score fields to be absent', function () {
     expect(isUnscoredGame(gameFixture)).equals(true)

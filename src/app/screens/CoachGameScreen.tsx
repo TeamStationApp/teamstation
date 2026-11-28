@@ -74,11 +74,17 @@ import {
 } from '../scoring/ScoringSheet'
 import { useScoringSheetTheme } from '../scoring/scoringSheetTheme'
 import {
+  type NamedGameDetail,
+  scoredGame,
   type ScoringSource,
   ServerScoringSource
 } from '../scoring/scoringSource'
 import type { ScoringState } from '../scoring/scoringTypes'
-import { type GameReplaced, useGameReplaced } from '../scoring/sidesSwapped'
+import {
+  type GameReplaced,
+  type GameSidesRead,
+  useGameReplaced
+} from '../scoring/sidesSwapped'
 import { dictationUrl } from '../scoring/useDictation'
 import { useScoringExit } from '../scoring/useScoringExit'
 import {
@@ -225,7 +231,7 @@ function presented(
 }
 
 interface Opened {
-  game: GameDetail
+  game: NamedGameDetail
   side: Side
   session: ScoringSession
   rosters: Record<string, RosterEntry[]>
@@ -438,7 +444,7 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
     redraw?.()
   }, [])
   const readSides = useCallback(
-    async (): Promise<GameDetail> => await client.game(gameId),
+    async (): Promise<GameSidesRead> => await client.game(gameId),
     [client, gameId]
   )
   // Once for each opened game: the swap's notice, a resync's read and a
@@ -601,7 +607,8 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
     const load = async (): Promise<void> => {
       // With no signal known, each read answers what the phone stored at
       // once, rather than after its deadline.
-      const game = await client.game(gameId, OFFLINE_FIRST)
+      // A game with an open side has no lineup to coach yet: its load fails.
+      const game = scoredGame(await client.game(gameId, OFFLINE_FIRST))
       const of: Side | undefined =
         teamId === game.homeTeamId
           ? 'home'

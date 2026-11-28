@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 
 import { DICTATION_MODELS, TeamStationClient } from '../../common/api'
 import { HttpError } from '../../common/errors'
+import { withNamedSides } from '../../common/openSides'
 import { ScoringSession } from '../../common/scoring/session'
 import { userIdOfGumbo } from '../../common/userId'
 import { confirmedChatAgeHooks } from '../../test/chatAgeTesting'
@@ -396,8 +397,8 @@ describe('scoring shell and exit', function () {
           game.id,
           {
             gamePk: game.id,
-            teams: teamsOf(game),
-            setup: startingSetup(game, away, home)
+            teams: teamsOf(withNamedSides(game)),
+            setup: startingSetup(withNamedSides(game), away, home)
           }
         )
         return opened

@@ -1450,6 +1450,19 @@ describe('GameSocket chat (U9)', function () {
     }
     last().receive(change)
     expect(game).deep.equals([change])
+    // A game change names an open side `''`, which listeners hear as null.
+    const open = {
+      ...change,
+      data: { status: 'scheduled', homeTeamId: 'tem_hawks', awayTeamId: '' }
+    }
+    last().receive(open)
+    expect(game[1]).deep.equals({
+      ...change,
+      data: { status: 'scheduled', homeTeamId: 'tem_hawks', awayTeamId: null }
+    })
+    const bare = { type: 'change', gameId: 'g1', kind: 'game', at: 'x' }
+    last().receive(bare)
+    expect(game[2]).deep.equals({ ...bare, data: undefined })
     expect(chat).lengthOf(frames.length)
     socket.close()
   })

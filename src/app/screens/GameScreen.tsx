@@ -32,6 +32,7 @@ import { HttpError } from '../../common/errors'
 import { eventName } from '../../common/eventInfo'
 import { eventHeroLines, viewerTimezone } from '../../common/eventTime'
 import type { GameSocket } from '../../common/gameSocket'
+import { namedTeamIds } from '../../common/openSides'
 import type { Side } from '../../common/scoring/state'
 import type { ScreenScopeNotice } from '../../common/screenScope'
 import type { WallTimeline } from '../../common/wallTimeline'
@@ -135,7 +136,7 @@ import type { Theme } from '../theme/types'
 import { BoxScore } from './BoxScore'
 import { EventInfoTab } from './EventInfoTab'
 import { defaultEventTab, eventEndTime } from './eventTabPolicy'
-import { gameStatusLine, winnerOf } from './format'
+import { gameStatusLine, namedTeamsOf, winnerOf } from './format'
 import { gameActions, gameTabs, heroCoachSides } from './gameTabs'
 import { GameWatchLayout } from './GameWatchLayout'
 import { watchHandoff } from './gameWatchLayoutProps'
@@ -1076,7 +1077,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       setOpenableTeams(previous => (previous.size === 0 ? previous : new Map()))
       return
     }
-    if (awayTeamId == null || homeTeamId == null) return
+    // Not read yet; an open side (null) has no page and is left out.
+    if (awayTeamId === undefined || homeTeamId === undefined) return
     let live = true
     const load = async (): Promise<void> => {
       // Both lists: your own teams, which you can always open, and the rest of
@@ -1090,7 +1092,9 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           : client.seasonTeams(seasonId).catch(() => [])
       ])
       if (!live) return
-      setOpenableTeams(teamsWithAPage(lists, [awayTeamId, homeTeamId]))
+      setOpenableTeams(
+        teamsWithAPage(lists, namedTeamIds(awayTeamId, homeTeamId))
+      )
     }
     load().catch(() => undefined)
     return () => {
@@ -2038,20 +2042,25 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    * `undefined` rather than a handler that does nothing, so the card can tell
    * a name that opens something from one that is only a name.
    */
-  const openSide = (teamId: string): (() => void) | undefined => {
+  const openSide = (teamId: string | null): (() => void) | undefined => {
+    // An open (TBD) side has no page.
+    if (teamId == null) return undefined
     const team = openableTeams.get(teamId)
     if (team == null || onOpenTeam == null) return undefined
     return () => {
       onOpenTeam(team)
     }
   }
-  const teamOf = (side: Side): string =>
-    side === 'home' ? game.homeTeamId : game.awayTeamId
+  // A side a person coaches is named: an open side has no coaches.
+  const coachTeam = (side: Side): void => {
+    const teamId = side === 'home' ? game.homeTeamId : game.awayTeamId
+    if (teamId != null) props.onCoachGame?.(teamId)
+  }
   // Straight to the one team a coach coaches; a coach of both
   // picks one.
   const openCoach = (): void => {
     const [only, other] = heroCoachSides(game)
-    if (other == null) props.onCoachGame?.(teamOf(only))
+    if (other == null) coachTeam(only)
     else setChoosingCoach(true)
   }
   const heroActions = gameActions({
@@ -2826,10 +2835,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
                 key={`${game.id}:${props.signedIn}`}
                 client={client}
                 signedIn={props.signedIn}
-                teams={[
-                  { id: game.homeTeamId, name: game.homeTeamName },
-                  { id: game.awayTeamId, name: game.awayTeamName }
-                ]}
+                teams={namedTeamsOf(game)}
                 onSignIn={() => props.onSignIn?.()}
               />
             )
@@ -2926,10 +2932,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         <VideoMembershipSheet
           client={client}
           signedIn={props.signedIn}
-          teams={[
-            { id: game.homeTeamId, name: game.homeTeamName },
-            { id: game.awayTeamId, name: game.awayTeamName }
-          ]}
+          teams={namedTeamsOf(game)}
           onSignIn={() => {
             props.onSignIn?.()
           }}
@@ -2955,7 +2958,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           choices={heroCoachSides(game).map(side => ({
             label: side === 'away' ? game.awayTeamName : game.homeTeamName,
             onPress: () => {
-              props.onCoachGame?.(teamOf(side))
+              coachTeam(side)
             }
           }))}
           onClose={() => {

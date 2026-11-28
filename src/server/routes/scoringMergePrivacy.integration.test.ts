@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 
 import { TeamStationClient } from '../../common/api'
+import { withNamedSides } from '../../common/openSides'
 import { recordOf } from '../../common/scoring/gumbo'
 import { ScoringSession } from '../../common/scoring/session'
 import { startingSetup, teamsOf } from '../../common/scoring/startingSetup'
@@ -53,7 +54,7 @@ describe('merged scoring names on public reads', function () {
       })
     const scorer = await api(f.users.scorekeeper.userId)
     const member = await api(f.users.member.userId)
-    const game = await scorer.game(f.gameId)
+    const game = withNamedSides(await scorer.game(f.gameId))
     const [away, home] = await Promise.all([
       scorer.roster(f.teams.away),
       scorer.roster(f.teams.home)

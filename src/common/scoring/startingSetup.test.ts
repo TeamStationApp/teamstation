@@ -17,6 +17,7 @@ import {
   type LineupPerson,
   type RosterEntry
 } from '../api'
+import { withNamedSides } from '../openSides'
 import { asGumboId, userIdOfGumbo } from '../userId'
 import type { ScoringAction } from './actions'
 import { freshGame } from './lineup'
@@ -43,24 +44,26 @@ import {
   type Side
 } from './state'
 
-const game = asGameDetail({
-  nonMemberView: false,
-  id: 'g1',
-  awayTeamId: 'away',
-  homeTeamId: 'home',
-  awayTeamName: 'Owls',
-  homeTeamName: 'Hawks',
-  seasonId: null,
-  startAt: null,
-  venue: null,
-  status: 'scheduled',
-  homeScore: null,
-  awayScore: null,
-  ingestStatus: 'pending',
-  ingestMessage: null,
-  canScore: true,
-  videos: []
-})
+const game = withNamedSides(
+  asGameDetail({
+    nonMemberView: false,
+    id: 'g1',
+    awayTeamId: 'away',
+    homeTeamId: 'home',
+    awayTeamName: 'Owls',
+    homeTeamName: 'Hawks',
+    seasonId: null,
+    startAt: null,
+    venue: null,
+    status: 'scheduled',
+    homeScore: null,
+    awayScore: null,
+    ingestStatus: 'pending',
+    ingestMessage: null,
+    canScore: true,
+    videos: []
+  })
+)
 
 function roster(userIds: number[]): RosterEntry[] {
   return userIds.map(userId =>

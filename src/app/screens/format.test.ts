@@ -6,6 +6,7 @@ import {
   gameStatusLine,
   matchupLines,
   matchupTitle,
+  namedTeamsOf,
   resultFor,
   scheduleDate,
   winnerOf
@@ -63,6 +64,49 @@ describe('how a fixture is written', function () {
     expect(
       matchupLines({ ...game, eventType: 'game' }, 'tem_home')
     ).deep.equals({ first: 'Bay Stars', second: 'vs Alta Hawks' })
+  })
+})
+
+describe('a fixture with an open side', function () {
+  const open = { ...game, awayTeamId: null, awayTeamName: 'TBD' }
+
+  it('names the open side TBD from either side and from none', function () {
+    expect(matchupLines(open)).deep.equals({
+      first: 'TBD',
+      second: '@ Bay Stars'
+    })
+    expect(matchupLines(open, 'tem_home')).deep.equals({
+      first: 'Bay Stars',
+      second: 'vs TBD'
+    })
+    expect(matchupTitle(matchupLines(open))).equals('TBD @ Bay Stars')
+  })
+
+  it('lists only the named teams, home first', function () {
+    expect(namedTeamsOf(game)).deep.equals([
+      { id: 'tem_home', name: 'Bay Stars' },
+      { id: 'tem_away', name: 'Alta Hawks' }
+    ])
+    expect(namedTeamsOf(open)).deep.equals([
+      { id: 'tem_home', name: 'Bay Stars' }
+    ])
+    expect(
+      namedTeamsOf({ ...open, homeTeamId: null, homeTeamName: 'TBD' })
+    ).deep.equals([])
+  })
+
+  it('gives the named team its result against TBD', function () {
+    const final = {
+      ...open,
+      status: 'final',
+      startAt: '2026-09-06T19:00:00Z',
+      homeScore: 4,
+      awayScore: 2
+    }
+    expect(resultFor(final, 'tem_home')).deep.equals({
+      label: 'W 4–2',
+      tone: 'win'
+    })
   })
 })
 

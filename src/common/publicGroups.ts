@@ -13,6 +13,7 @@ import {
 import { asLiteral } from './asLiteral'
 import { withEventMetadata } from './eventInfo'
 import { asLocality } from './locality'
+import { asSideTeamId } from './openSides'
 import {
   asPlayerNamePrivacy,
   DEFAULT_PLAYER_NAME_PRIVACY
@@ -62,8 +63,9 @@ export type SearchRow = PublicGroup & {
 export const asPublicGame = withEventMetadata(
   asObject({
     id: asString,
-    homeTeam: asObject({ id: asString, name: asString }),
-    awayTeam: asObject({ id: asString, name: asString }),
+    /** An open side's id is null, its name TBD. */
+    homeTeam: asObject({ id: asSideTeamId, name: asString }),
+    awayTeam: asObject({ id: asSideTeamId, name: asString }),
     seasonId: nullable(asString),
     startAt: asString,
     venue: nullable(asString),

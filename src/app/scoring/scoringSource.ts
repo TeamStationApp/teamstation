@@ -5,6 +5,7 @@ import type {
   TeamStationClient
 } from '../../common/api'
 import { type TagChoices, tagTargets } from '../../common/eventTags'
+import { hasNamedSides, type NamedSides } from '../../common/openSides'
 import {
   cleanAction,
   FOLD_VERSION,
@@ -36,6 +37,27 @@ import { holdWhenOutdated, restoreHeld } from './heldScoring'
 import { LocalEventTags } from './localEventTags'
 import type { PreferenceStorage } from './scoringPreferenceStore'
 import { ServerClock } from './serverClock'
+
+/** A game whose sides are both named: the only kind scoring opens. */
+export type NamedGameDetail = NamedSides<GameDetail>
+
+/** Whether both of a game's sides are named. */
+export const namedSides = (game: GameDetail): game is NamedGameDetail =>
+  hasNamedSides(game)
+
+/** Why scoring did not open a game: one of its sides is open (TBD). */
+export class OpenSidesError extends Error {
+  constructor(readonly game: GameDetail) {
+    super("This game's team is TBD: choose it before you score.")
+    this.name = 'OpenSidesError'
+  }
+}
+
+/** The game read, refused with `OpenSidesError` when a side is open. */
+export function scoredGame(game: GameDetail): NamedGameDetail {
+  if (!namedSides(game)) throw new OpenSidesError(game)
+  return game
+}
 
 /** Where the scoring screen's game comes from and is kept. */
 export interface ScoringSource {
@@ -84,7 +106,7 @@ export interface HeldOpening {
 }
 
 function context(
-  game: GameDetail,
+  game: NamedGameDetail,
   away: RosterEntry[],
   home: RosterEntry[],
   defaults: DefaultLineups = {},
@@ -133,7 +155,7 @@ export const DEFAULT_LINEUP_WAIT_MS = 1500
  */
 export async function defaultsOf(
   client: TeamStationClient,
-  game: GameDetail,
+  game: NamedGameDetail,
   storedFirst = false,
   offlineFirst = false,
   /**
@@ -223,7 +245,7 @@ export interface GameReads {
    * Both teams' default lineups, as the scoring screen reads them: a game
    * whose plays are all still on the phone starts from them.
    */
-  defaults: (game: GameDetail) => Promise<DefaultLineups>
+  defaults: (game: NamedGameDetail) => Promise<DefaultLineups>
   /** Its plays as the server holds them now. */
   server: () => Promise<StoredGame>
 }
@@ -252,7 +274,8 @@ export async function rebuildGameEvents(
     actions.push(cleaned.action)
   }
   const game = await reads.game()
-  if (game == null) return null
+  // A game with an open side has no plays to rebuild on.
+  if (game == null || !namedSides(game)) return null
   const [away, home] = await Promise.all([
     reads.roster(game.awayTeamId),
     reads.roster(game.homeTeamId)
@@ -340,12 +363,13 @@ export class ServerScoringSource implements ScoringSource {
   }
 
   async open(
-    game: GameDetail,
+    read: GameDetail,
     away: RosterEntry[],
     home: RosterEntry[],
     opening?: HeldOpening,
     options?: OpenOptions
   ): Promise<ScoringSession> {
+    const game = scoredGame(read)
     const client = this.client
     const storedFirst = options?.storedFirst === true
     const offlineFirst = options?.offlineFirst === true
@@ -371,7 +395,8 @@ export class ServerScoringSource implements ScoringSource {
     }
     const store: EventStore = {
       load: async gameId => {
-        const readTeams = async (game: GameDetail): Promise<void> => {
+        const readTeams = async (read: GameDetail): Promise<void> => {
+          const game = scoredGame(read)
           currentGame = game
           const [away, home] = await Promise.all([
             client.roster(game.awayTeamId),
@@ -579,7 +604,7 @@ export class DevelopmentScoringSource implements ScoringSource {
     return await ScoringSession.open(
       this.store,
       game.id,
-      context(game, away, home),
+      context(scoredGame(game), away, home),
       { requireCurrentSetup: true }
     )
   }

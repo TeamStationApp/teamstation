@@ -104,6 +104,7 @@ import {
 } from './notifications'
 import { type AnalyticsSink, observeApi } from './observability/apiEvents'
 import { asOnboarding, type Onboarding } from './onboarding'
+import { asSideTeamId } from './openSides'
 import { calibratePasswordCosts } from './passwordCalibration'
 import {
   asArgonParameters,
@@ -398,8 +399,8 @@ export type FollowableTeam = ReturnType<typeof asFollowableTeam>
 export const asScheduleEntry = asObject({
   gameId: asString,
   startsAt: asString,
-  homeTeam: asObject({ id: asString, name: asString }),
-  awayTeam: asObject({ id: asString, name: asString }),
+  homeTeam: asObject({ id: asSideTeamId, name: asString }),
+  awayTeam: asObject({ id: asSideTeamId, name: asString }),
   venue: asNullable(asString)
 })
 export type ScheduleEntry = ReturnType<typeof asScheduleEntry>
@@ -1100,8 +1101,8 @@ function asSeasonTeamSummary(raw: unknown): SeasonTeamSummary {
 export const asGameSummary = withEventMetadata(
   asObject({
     id: asString,
-    homeTeamId: asString,
-    awayTeamId: asString,
+    homeTeamId: asSideTeamId,
+    awayTeamId: asSideTeamId,
     homeTeamName: asString,
     awayTeamName: asString,
     seasonId: asNullable(asString),
@@ -1223,8 +1224,8 @@ export const asGameDetail = withEventMetadata(
       () => ({ away: [], home: [] })
     ),
     id: asString,
-    homeTeamId: asString,
-    awayTeamId: asString,
+    homeTeamId: asSideTeamId,
+    awayTeamId: asSideTeamId,
     /** The game's play generation; an older server sends none. */
     generation: asOptional(asNumber, 0),
     homeTeamName: asString,
@@ -2193,8 +2194,8 @@ export type AccountAffiliations = ReturnType<typeof asAccountAffiliations>
 export const asSeasonGame = withEventMetadata(
   asObject({
     id: asString,
-    homeTeamId: asString,
-    awayTeamId: asString,
+    homeTeamId: asSideTeamId,
+    awayTeamId: asSideTeamId,
     homeTeamName: asString,
     awayTeamName: asString,
     /** Placeholder identities have no roster of their own. */
@@ -2762,8 +2763,8 @@ export const asLiveNow = asObject({
   gameId: asString,
   title: asString,
   /** The teams' ids, for their tiles' colours; absent on older servers. */
-  homeTeamId: asOptional(asString, ''),
-  awayTeamId: asOptional(asString, ''),
+  homeTeamId: asOptional(asSideTeamId, null),
+  awayTeamId: asOptional(asSideTeamId, null),
   homeTeamName: asString,
   awayTeamName: asString,
   startedAt: asNullable(asString),
@@ -6068,8 +6069,8 @@ export class TeamStationClient {
     games: Array<{
       id: string
       startAt: string
-      homeTeamId: string
-      awayTeamId: string
+      homeTeamId: string | null
+      awayTeamId: string | null
       started: boolean
       schedule: SeasonGame | null
     }>
@@ -6088,8 +6089,8 @@ export class TeamStationClient {
           asObject({
             id: asString,
             startAt: asString,
-            homeTeamId: asString,
-            awayTeamId: asString,
+            homeTeamId: asSideTeamId,
+            awayTeamId: asSideTeamId,
             started: asBoolean,
             schedule: asNullable(asSeasonGame)
           })

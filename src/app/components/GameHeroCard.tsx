@@ -12,9 +12,12 @@ import { VideoPoster } from './VideoPoster'
 export interface GameHeroCardProps {
   onSettings?: () => void
   testID?: string
-  /** Each side's team id, which picks its tile's colour. */
-  awayTeamId: string
-  homeTeamId: string
+  /**
+   * Each side's team id, which picks its tile's colour. Null for an open
+   * (TBD) side, which has no team to open, no logo and no colour.
+   */
+  awayTeamId: string | null
+  homeTeamId: string | null
   awayName: string
   homeName: string
   awayScore: number | null
@@ -232,11 +235,11 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
             name={awayName}
             score={awayScore}
             record={awayRecord}
-            logoUrl={awayLogoUrl}
+            logoUrl={props.awayTeamId == null ? null : awayLogoUrl}
             note="Away"
             won={winner === 'away'}
             stacked={narrow}
-            onPress={onOpenAwayTeam}
+            onPress={props.awayTeamId == null ? undefined : onOpenAwayTeam}
           />
           {!hasMeta && <Text style={styles.plainStatus}>{status}</Text>}
           <ScoreLine
@@ -244,12 +247,12 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
             name={homeName}
             score={homeScore}
             record={homeRecord}
-            logoUrl={homeLogoUrl}
+            logoUrl={props.homeTeamId == null ? null : homeLogoUrl}
             note="Home"
             won={winner === 'home'}
             alignEnd={!narrow}
             stacked={narrow}
-            onPress={onOpenHomeTeam}
+            onPress={props.homeTeamId == null ? undefined : onOpenHomeTeam}
           />
         </View>
         {line}
@@ -333,7 +336,8 @@ function StatLines(props: {
 }
 
 function ScoreLine(props: {
-  teamId: string
+  /** Null for an open side: the theme's untinted tile. */
+  teamId: string | null
   name: string
   score: number | null
   record?: string | null

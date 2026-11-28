@@ -18,6 +18,7 @@ import {
   maestro
 } from '../../../e2e/rigs/refinementsMaestro'
 import { DEFAULT_DICTATION_MODEL, TeamStationClient } from '../../common/api'
+import { withNamedSides } from '../../common/openSides'
 import type { ScoringAction } from '../../common/scoring/actions'
 import { ScoringSession } from '../../common/scoring/session'
 import { startingSetup, teamsOf } from '../../common/scoring/startingSetup'
@@ -143,7 +144,7 @@ async function score(
     baseUrl: API,
     token: await tokenOf(fixture, 'scorekeeper')
   })
-  const game = await client.game(fixture.gameId)
+  const game = withNamedSides(await client.game(fixture.gameId))
   const [away, home, awayDefault, homeDefault] = await Promise.all([
     client.roster(game.awayTeamId),
     client.roster(game.homeTeamId),

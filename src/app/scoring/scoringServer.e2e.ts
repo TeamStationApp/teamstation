@@ -19,6 +19,7 @@ import {
   setTrajectory
 } from '../../../e2e/rigs/fieldPointer'
 import type { GameDetail, RosterEntry } from '../../common/api'
+import { withNamedSides } from '../../common/openSides'
 import {
   dictatedAction,
   type ScoringAction
@@ -649,7 +650,7 @@ describe('scoring into the server', function () {
       teamStation: { setupBefore: GameSetup }
     }
     const setup = first.teamStation.setupBefore
-    const teams = teamsOf(detail)
+    const teams = teamsOf(withNamedSides(detail))
 
     // The fixture numbers the visitors' batters 1–9 by slot and the hosts'
     // fielders 10–18 by position: the same slot or position here is the

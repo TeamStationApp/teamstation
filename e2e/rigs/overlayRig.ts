@@ -14,6 +14,7 @@ import {
   teamsOf
 } from '../../src/app/scoring/developmentSession'
 import { type BoardStep, TeamStationClient } from '../../src/common/api'
+import { withNamedSides } from '../../src/common/openSides'
 import {
   type DashboardOverrides,
   NO_OVERRIDES
@@ -320,7 +321,7 @@ export function mediaAt(
 
 /** The scorer: the app's own scoring session, posting through the API. */
 export async function scorer(gameId: string): Promise<ScoringSession> {
-  const game = await client.game(gameId)
+  const game = withNamedSides(await client.game(gameId))
   const [away, home] = await Promise.all([
     client.roster(game.awayTeamId),
     client.roster(game.homeTeamId)

@@ -42,8 +42,9 @@ export interface UmpireGameRow {
   status: 'scheduled' | 'inProgress' | 'final' | 'cancelled'
   home: string
   away: string
-  homeTeamId?: string
-  awayTeamId?: string
+  /** Absent on older servers; null for an open (TBD) side, with no team page. */
+  homeTeamId?: string | null
+  awayTeamId?: string | null
   location?: string
   venue: string
   /** The registry field the game is on. Blank when the game has none. */

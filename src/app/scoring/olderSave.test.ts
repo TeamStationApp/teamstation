@@ -3,6 +3,7 @@ import { describe, it } from 'mocha'
 
 import { asGameDetail, asRosterEntry, type RosterEntry } from '../../common/api'
 import type { GumboPlay } from '../../common/gumboPlay'
+import { withNamedSides } from '../../common/openSides'
 import type { ScoringAction } from '../../common/scoring/actions'
 import {
   type EventStore,
@@ -15,24 +16,26 @@ import { startingSetup, teamsOf } from './developmentSession'
 import { overrideActions, overrideDraftOf } from './overrideModel'
 import { memoryStore, olderSaveFoldsAlike } from './scoringSource'
 
-const game = asGameDetail({
-  nonMemberView: false,
-  id: 'g1',
-  awayTeamId: 'away',
-  homeTeamId: 'home',
-  awayTeamName: 'Owls',
-  homeTeamName: 'Hawks',
-  seasonId: null,
-  startAt: null,
-  venue: null,
-  status: 'scheduled',
-  homeScore: null,
-  awayScore: null,
-  ingestStatus: 'pending',
-  ingestMessage: null,
-  canScore: true,
-  videos: []
-})
+const game = withNamedSides(
+  asGameDetail({
+    nonMemberView: false,
+    id: 'g1',
+    awayTeamId: 'away',
+    homeTeamId: 'home',
+    awayTeamName: 'Owls',
+    homeTeamName: 'Hawks',
+    seasonId: null,
+    startAt: null,
+    venue: null,
+    status: 'scheduled',
+    homeScore: null,
+    awayScore: null,
+    ingestStatus: 'pending',
+    ingestMessage: null,
+    canScore: true,
+    videos: []
+  })
+)
 const roster = (first: number): RosterEntry[] =>
   Array.from({ length: 9 }, (_, i) =>
     asRosterEntry({

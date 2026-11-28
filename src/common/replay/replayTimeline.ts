@@ -189,13 +189,13 @@ export function hasRecords(stored: StoredGame): boolean {
 
 /**
  * The teams, lineups and fence a replay opens a game with: the app's twin of
- * the server's `contextOf`. Null when nothing TeamStation scored is stored.
+ * the server's `contextOf`. Null when nothing TeamStation scored is stored, as for a game with an open side.
  */
 export function replayContextOf(
   game: {
     id: string
-    awayTeamId: string
-    homeTeamId: string
+    awayTeamId: string | null
+    homeTeamId: string | null
     awayTeamName: string
     homeTeamName: string
     awayLogoUrl?: string | null
@@ -204,6 +204,8 @@ export function replayContextOf(
   },
   stored: StoredGame
 ): SessionContext | null {
+  // A game with an open side has never been scored.
+  if (game.awayTeamId == null || game.homeTeamId == null) return null
   const teams = {
     away: { id: game.awayTeamId },
     home: { id: game.homeTeamId }

@@ -3,11 +3,14 @@ import { describe, it } from 'mocha'
 
 import {
   asSideTeamId,
+  hasNamedSides,
   namedTeamIds,
   OPEN_SIDE_NAME,
   openSidesOf,
   sideName,
-  wireSideId
+  storedSideId,
+  wireSideId,
+  withNamedSides
 } from './openSides'
 import { teamsOfRow } from './teamLists'
 
@@ -60,5 +63,21 @@ describe('open sides', () => {
     expect(sideName(names, null, 'Away team')).equals(OPEN_SIDE_NAME)
     expect(sideName(names, 'team-ravens', 'Away team')).equals('Ravens')
     expect(sideName(names, 'team-gone', 'Home team')).equals('Home team')
+  })
+
+  it('tells a game whose sides are both named, and refuses one that is open', () => {
+    const named = { id: 'g', homeTeamId: 'a', awayTeamId: 'b' }
+    expect(hasNamedSides(named)).equals(true)
+    expect(hasNamedSides({ ...named, awayTeamId: null })).equals(false)
+    expect(hasNamedSides({ ...named, homeTeamId: null })).equals(false)
+    expect(withNamedSides(named)).equals(named)
+    expect(() => withNamedSides({ ...named, homeTeamId: null })).throws('TBD')
+  })
+
+  it("reads a stored side's id, leaving out an open one and none", () => {
+    expect(storedSideId('team-ravens')).equals('team-ravens')
+    expect(storedSideId('')).equals(undefined)
+    expect(storedSideId(null)).equals(undefined)
+    expect(storedSideId(7)).equals(undefined)
   })
 })

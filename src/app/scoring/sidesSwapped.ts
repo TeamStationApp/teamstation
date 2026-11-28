@@ -14,6 +14,16 @@ export interface OpenedGame extends GameSides {
   generation?: number
 }
 
+/**
+ * A game's sides and generation as a read or a notice names them: a side may
+ * be open (null), which no screen that scores is opened on.
+ */
+export interface GameSidesRead {
+  homeTeamId?: string | null
+  awayTeamId?: string | null
+  generation?: number
+}
+
 /** What changed under the open game. */
 export interface GameReplaced {
   /** Home and away were swapped. */
@@ -35,7 +45,7 @@ export function useGameReplaced(
   socket: GameChanges | undefined,
   gameId: string,
   opened: OpenedGame | undefined,
-  read: () => Promise<Partial<OpenedGame>>,
+  read: () => Promise<GameSidesRead>,
   onReplace: (change: GameReplaced) => void
 ): void {
   const latest = useRef({ read, onReplace })
@@ -47,7 +57,7 @@ export function useGameReplaced(
     if (home == null || away == null) return
     let live = true
     let fired = false
-    const check = (game: Partial<OpenedGame>): void => {
+    const check = (game: GameSidesRead): void => {
       if (!live || fired) return
       if (game.homeTeamId == null || game.awayTeamId == null) return
       const swapped = game.homeTeamId !== home || game.awayTeamId !== away

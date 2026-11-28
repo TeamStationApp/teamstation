@@ -17,7 +17,7 @@ import {
   type RosterEntry,
   TeamStationClient
 } from '../../src/common/api'
-import { wireSideId } from '../../src/common/openSides'
+import { wireSideId, withNamedSides } from '../../src/common/openSides'
 import type { ScoringAction } from '../../src/common/scoring/actions'
 import { ScoringSession } from '../../src/common/scoring/session'
 import { startingSetup, teamsOf } from '../../src/common/scoring/startingSetup'
@@ -148,7 +148,7 @@ export async function score(
   actions: ScoringAction[] | ((game: GameState) => ScoringAction[])
 ): Promise<ScoringSession> {
   const client = await clientOf(fixture, 'scorekeeper')
-  const game = await client.game(fixture.gameId)
+  const game = withNamedSides(await client.game(fixture.gameId))
   // An outside opponent has no roster or default to read: none, as the
   // scoring screen takes it.
   const roster = async (teamId: string): Promise<RosterEntry[]> =>

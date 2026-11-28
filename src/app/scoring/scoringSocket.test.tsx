@@ -11,6 +11,7 @@ import {
 import { HttpError } from '../../common/errors'
 import type { PlanCell } from '../../common/gamePlan'
 import type { GameChangeData, GameSocketEvent } from '../../common/gameSocket'
+import { withNamedSides } from '../../common/openSides'
 import { cleanAction, type ScoringAction } from '../../common/scoring/actions'
 import {} from '../../common/scoring/gumbo'
 import { overrideOf } from '../../common/scoring/rules'
@@ -1887,7 +1888,11 @@ describe('a game swapped under the scoring screen on the socket', function () {
       persistent: true,
       open: async detail => {
         opens++
-        const session = await GameSession.open(reads, 'g1', context(detail))
+        const session = await GameSession.open(
+          reads,
+          'g1',
+          context(withNamedSides(detail))
+        )
         const subscribe = session.subscribe.bind(session)
         session.subscribe = listener => {
           listening++

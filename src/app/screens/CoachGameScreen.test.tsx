@@ -20,6 +20,7 @@ import {
 import { HttpError } from '../../common/errors'
 import type { GamePlan, PlanCell } from '../../common/gamePlan'
 import type { GameSocketEvent } from '../../common/gameSocket'
+import { withNamedSides } from '../../common/openSides'
 import { EMPTY_PLAN_SAME_DAY } from '../../common/planWarnings'
 import { DEFAULT_PLAYING_TIME_RULES } from '../../common/playingTimeRules'
 import {} from '../../common/scoring/gumbo'
@@ -56,7 +57,11 @@ import {
 import { gameFixture } from '../scoring/isUnscoredGame.test'
 import type { GameChanges } from '../scoring/rosterLive'
 import { initialScoringState, scoringReducer } from '../scoring/scoringMachine'
-import { DevelopmentScoringSource, memoryStore } from '../scoring/scoringSource'
+import {
+  DevelopmentScoringSource,
+  memoryStore,
+  type NamedGameDetail
+} from '../scoring/scoringSource'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { battingOrders, CoachGameScreen, lineupsBody } from './CoachGameScreen'
 import { GameScreen } from './GameScreen'
@@ -180,10 +185,10 @@ interface Server {
   writes: string[]
   plans: GamePlansResponse
   reads: { events: number; boxScore: number; lineups: number }
-  game: GameDetail
+  game: NamedGameDetail
   answer: (body: SaveLineupsBody) => Promise<GameLineupsResponse>
 }
-function server(game: Partial<GameDetail> = {}): Server {
+function server(game: Partial<NamedGameDetail> = {}): Server {
   const client = new TeamStationClient({ baseUrl: '/api/v1' })
   const held: Server = {
     client,
@@ -399,6 +404,36 @@ async function say(
 describe('Coach Game (U25)', function () {
   // The Shell reads the account's chat age on mount: confirmed here.
   confirmedChatAgeHooks()
+  it('fails to load a game whose opponent is TBD, reading no roster', async () => {
+    const held = server()
+    const read: string[] = []
+    held.client.game = async () => ({
+      ...held.game,
+      awayTeamId: null,
+      awayTeamName: 'TBD'
+    })
+    held.client.roster = async teamId => {
+      read.push(teamId)
+      return roster(teamId)
+    }
+    await render(
+      <CoachGameScreen
+        client={held.client}
+        gameId="g1"
+        teamId="home"
+        onExit={() => undefined}
+      />
+    )
+    await waitFor(
+      () =>
+        (document.body.textContent ?? '').includes(
+          'Unable to load the game. Please try again.'
+        ),
+      'the load failure'
+    )
+    expect(read).deep.equals([])
+    expect(held.saved).deep.equals([])
+  })
   it('keeps availability switches live while a lineup save is still out (U40)', async () => {
     const held = server()
     const save = held.client.saveLineups.bind(held.client)
@@ -2158,8 +2193,8 @@ describe('the coach’s game plan', function () {
       home: RosterEntry[]
     ): Parameters<typeof ScoringSession.open>[2] => ({
       gamePk: 'g1',
-      teams: teamsOf(game),
-      setup: startingSetup(game, away, home)
+      teams: teamsOf(withNamedSides(game)),
+      setup: startingSetup(withNamedSides(game), away, home)
     })
     const screen = await coach(held, {
       socket: changes,
@@ -2777,7 +2812,7 @@ describe('a game swapped under the coach screen', function () {
   // The Shell reads the account's chat age on mount: confirmed here.
   confirmedChatAgeHooks()
   /** The game after the swap: the Owls at home, his Hawks away. */
-  const swappedGame = (held: Server): GameDetail => ({
+  const swappedGame = (held: Server): NamedGameDetail => ({
     ...held.game,
     homeTeamId: 'away',
     awayTeamId: 'home',
@@ -2820,8 +2855,8 @@ describe('a game swapped under the coach screen', function () {
         home: RosterEntry[]
       ): Parameters<typeof ScoringSession.open>[2] => ({
         gamePk: 'g1',
-        teams: teamsOf(game),
-        setup: startingSetup(game, away, home)
+        teams: teamsOf(withNamedSides(game)),
+        setup: startingSetup(withNamedSides(game), away, home)
       })
       if (recorded) {
         const seed = await ScoringSession.open(
@@ -2985,8 +3020,8 @@ describe('a game swapped under the coach screen', function () {
       home: RosterEntry[]
     ): Parameters<typeof ScoringSession.open>[2] => ({
       gamePk: 'g1',
-      teams: teamsOf(game),
-      setup: startingSetup(game, away, home)
+      teams: teamsOf(withNamedSides(game)),
+      setup: startingSetup(withNamedSides(game), away, home)
     })
     const seed = await ScoringSession.open(
       store,

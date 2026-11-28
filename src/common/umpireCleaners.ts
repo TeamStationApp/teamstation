@@ -11,6 +11,7 @@ import {
 } from 'cleaners'
 
 import { asLiteral } from './asLiteral'
+import { asSideTeamId } from './openSides'
 import { answeredUmpireSort, type UmpireSortKey } from './umpireSort'
 /**
  * An umpire schedule sort a server answers: its keys, first first. Read
@@ -188,8 +189,8 @@ export const asUmpireGameRow = asObject({
   ),
   home: asString,
   away: asString,
-  homeTeamId: asOptional(asString),
-  awayTeamId: asOptional(asString),
+  homeTeamId: asOptional(asSideTeamId),
+  awayTeamId: asOptional(asSideTeamId),
   location: asOptional(asString),
   venue: asString,
   field: asString,

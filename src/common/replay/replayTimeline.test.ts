@@ -245,6 +245,13 @@ describe('replay context and whether a game replays', function () {
     expect(replayContextOf({ ...gameDetail() }, fresh)?.setup).deep.equals(
       withoutHalves(context.setup)
     )
+    // A game with an open side was never scored: nothing replays.
+    expect(
+      replayContextOf({ ...gameDetail(), awayTeamId: null }, final)
+    ).equals(null)
+    expect(
+      replayContextOf({ ...gameDetail(), homeTeamId: null }, final)
+    ).equals(null)
   })
 
   it('replays a final or live game with a record for a member only', function () {

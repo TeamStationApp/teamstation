@@ -8,6 +8,7 @@ import {
   TeamStationClient
 } from '../../common/api'
 import { GAME_SOCKET_PROTOCOL, PROTOCOL_HEADER } from '../../common/gameSocket'
+import { withNamedSides } from '../../common/openSides'
 import type { PitchCall } from '../../common/scoring/actions'
 import { type EventStore, ScoringSession } from '../../common/scoring/session'
 import { startingSetup, teamsOf } from '../../common/scoring/startingSetup'
@@ -98,7 +99,8 @@ export async function livePitch(
     token: options.token,
     fetch
   })
-  const game = await client.game(options.gameId)
+  // A live pitch plays a game whose sides are named.
+  const game = withNamedSides(await client.game(options.gameId))
   const [away, home] = await Promise.all([
     client.roster(game.awayTeamId),
     client.roster(game.homeTeamId)

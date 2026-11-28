@@ -8,6 +8,7 @@ import {
   type RosterEntry
 } from '../../common/api'
 import type { GumboPlay } from '../../common/gumboPlay'
+import { withNamedSides } from '../../common/openSides'
 import type { ScoringAction } from '../../common/scoring/actions'
 import {
   type EventStore,
@@ -25,24 +26,26 @@ import {
 } from './developmentSession'
 import { type GameReads, memoryStore, rebuildGameEvents } from './scoringSource'
 
-const game = asGameDetail({
-  nonMemberView: false,
-  id: 'g1',
-  awayTeamId: 'away',
-  homeTeamId: 'home',
-  awayTeamName: 'Owls',
-  homeTeamName: 'Hawks',
-  seasonId: null,
-  startAt: null,
-  venue: null,
-  status: 'scheduled',
-  homeScore: null,
-  awayScore: null,
-  ingestStatus: 'pending',
-  ingestMessage: null,
-  canScore: true,
-  videos: []
-})
+const game = withNamedSides(
+  asGameDetail({
+    nonMemberView: false,
+    id: 'g1',
+    awayTeamId: 'away',
+    homeTeamId: 'home',
+    awayTeamName: 'Owls',
+    homeTeamName: 'Hawks',
+    seasonId: null,
+    startAt: null,
+    venue: null,
+    status: 'scheduled',
+    homeScore: null,
+    awayScore: null,
+    ingestStatus: 'pending',
+    ingestMessage: null,
+    canScore: true,
+    videos: []
+  })
+)
 const roster = (first: number): RosterEntry[] =>
   Array.from({ length: 9 }, (_, i) =>
     asRosterEntry({
@@ -319,6 +322,13 @@ describe('rebuilding a save a build queued from the log it kept', function () {
       await rebuildGameEvents(game.id, queued.log!, {
         ...reads(served),
         game: async () => undefined
+      })
+    ).equals(null)
+    // A game with an open side has no plays to rebuild on.
+    expect(
+      await rebuildGameEvents(game.id, queued.log!, {
+        ...reads(served),
+        game: async () => ({ ...game, homeTeamId: null })
       })
     ).equals(null)
   })

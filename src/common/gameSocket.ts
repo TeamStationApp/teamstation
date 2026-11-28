@@ -182,10 +182,10 @@ export interface GameChangeData {
     homeScore: number | null
     /**
      * The teams as the game now stands: a screen opened on others reopens.
-     * An older server sends none.
+     * An older server sends none; an open side is null (`''` on the wire).
      */
-    homeTeamId?: string
-    awayTeamId?: string
+    homeTeamId?: string | null
+    awayTeamId?: string | null
     /**
      * The game's play generation: a screen opened on another reopens, for
      * the plays it holds were reset. An older server sends none.
@@ -623,6 +623,18 @@ const asLegacyPlays = (raw: unknown): GameChange => {
   }
 }
 
+/**
+ * A `game` change's data with an open side's id (`''` on the wire) read as
+ * null, as the answer cleaners read it.
+ */
+function gameChangeData(data: unknown): unknown {
+  if (data == null || typeof data !== 'object') return data
+  const game = { ...(data as Record<string, unknown>) }
+  for (const key of ['homeTeamId', 'awayTeamId'])
+    if (game[key] === '') game[key] = null
+  return game
+}
+
 /** A change frame as listeners hear it, or undefined when it does not read. */
 function changeOf(raw: unknown): GameChange | undefined {
   try {
@@ -630,7 +642,11 @@ function changeOf(raw: unknown): GameChange | undefined {
   } catch {}
   try {
     const change = asChangeHead(raw)
-    const message = { ...change, data: (raw as { data?: unknown }).data }
+    const data: unknown = (raw as { data?: unknown }).data
+    const message = {
+      ...change,
+      data: change.kind === 'game' ? gameChangeData(data) : data
+    }
     return message as GameChange
   } catch {
     return undefined

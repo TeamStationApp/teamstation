@@ -150,8 +150,9 @@ export function BoxScore(props: BoxScoreProps): React.ReactElement {
         : (userId: string, name: string) => {
             onOpenPlayer(userId, name, {
               seasonId: game.seasonId ?? undefined,
-              teamId: side.teamId,
-              onTeam: side.teamId
+              // An open side has no players, so no team either.
+              teamId: side.teamId ?? undefined,
+              onTeam: side.teamId ?? undefined
             })
           }
     return (

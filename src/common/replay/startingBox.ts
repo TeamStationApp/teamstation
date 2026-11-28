@@ -1,4 +1,5 @@
 import type { GameDetail, GameLineupsResponse, Lineup } from '../api'
+import { hasNamedSides } from '../openSides'
 import { freshGame, newSetup, type RosterPlayer } from '../scoring/lineup'
 import { teamsOf, withSideLineup } from '../scoring/startingSetup'
 import { setupOf } from '../scoring/state'
@@ -32,6 +33,8 @@ export function startingBox(
   }
   const rosters = { away: roster(chosen.away), home: roster(chosen.home) }
   if (chosen.away === null && chosen.home === null) return null
+  // A game with an open side has no lineup on it, so no box either.
+  if (!hasNamedSides(game)) return null
   const teams = teamsOf(game)
   let state = freshGame(game.id, teams, newSetup(teams, rosters))
   for (const side of ['away', 'home'] as const) {

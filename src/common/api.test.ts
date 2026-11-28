@@ -10,6 +10,7 @@ import {
   asChatBlock,
   asChatKind,
   asGameDetail,
+  asGameSummary,
   asHighlight,
   asLiveNow,
   asLiveStream,
@@ -22,7 +23,9 @@ import {
   asPostedEdits,
   asRosterEntry,
   asSaveLineupsBody,
+  asScheduleEntry,
   asScopeGrant,
+  asSeasonGame,
   asSeasonSummary,
   asSession,
   asStandingsRow,
@@ -36,8 +39,9 @@ import { HttpError, isUpdateRequired } from './errors'
 import { GAME_SOCKET_PROTOCOL, PROTOCOL_HEADER } from './gameSocket'
 import { asGumboPlay } from './gumboPlay'
 import { asNodeAccount } from './nodeAdministration'
-import { asGroupDetail, asPublicGroup } from './publicGroups'
+import { asGroupDetail, asPublicGame, asPublicGroup } from './publicGroups'
 import { halfOutcomes, lineScore } from './scoring/linescore'
+import { asUmpireGameRow } from './umpireCleaners'
 import { userIdOfGumbo } from './userId'
 
 interface Call {
@@ -4483,7 +4487,7 @@ describe('api client', function () {
 
 describe('the ids and pictures a group’s tile is drawn from', function () {
   const league = 'https://images.example.test/league.png'
-  it('keeps a live game’s team ids, and reads an older answer as none', function () {
+  it('keeps a live game’s team ids, and reads an older answer as open sides', function () {
     const live = {
       videoId: 'vid_demo',
       gameId: 'gam_demo',
@@ -4496,7 +4500,7 @@ describe('the ids and pictures a group’s tile is drawn from', function () {
     expect(
       asLiveNow({ ...live, homeTeamId: 'tem_hawks', awayTeamId: 'tem_owls' })
     ).includes({ homeTeamId: 'tem_hawks', awayTeamId: 'tem_owls' })
-    expect(asLiveNow(live)).includes({ homeTeamId: '', awayTeamId: '' })
+    expect(asLiveNow(live)).includes({ homeTeamId: null, awayTeamId: null })
   })
 
   it('keeps a season’s league picture, and reads an older answer as none', function () {
@@ -5876,5 +5880,154 @@ describe('the request deadline', function () {
     expect(asChatKind('leagueUmpires')).equals('leagueUmpires')
     expect(asChatKind('leagueOrg')).equals('leagueOrg')
     expect(() => asChatKind('leagueReferees')).throws()
+  })
+})
+
+describe('a game’s side read from an answer', function () {
+  /** Both sides as `read` reads them, for an open away side and a named one. */
+  const sides = (
+    read: (homeTeamId: string, awayTeamId: string) => unknown
+  ): unknown[] => [read('tem_hawks', ''), read('', 'tem_owls')]
+  const game = {
+    id: 'gam_1',
+    homeTeamName: 'Demo Hawks',
+    awayTeamName: 'TBD',
+    seasonId: null,
+    startAt: '2027-04-03T17:00:00.000Z',
+    venue: null,
+    status: 'scheduled',
+    homeScore: null,
+    awayScore: null,
+    ingestStatus: 'none',
+    videoCount: 0
+  }
+  const named = [
+    { homeTeamId: 'tem_hawks', awayTeamId: null },
+    { homeTeamId: null, awayTeamId: 'tem_owls' }
+  ]
+
+  it('reads an empty id as an open side and keeps a named id in a team’s games', function () {
+    expect(
+      sides((homeTeamId, awayTeamId) => {
+        const row = asGameSummary({ ...game, homeTeamId, awayTeamId })
+        return { homeTeamId: row.homeTeamId, awayTeamId: row.awayTeamId }
+      })
+    ).deep.equals(named)
+  })
+
+  it('reads an empty id as an open side in a season’s games', function () {
+    expect(
+      sides((homeTeamId, awayTeamId) => {
+        const row = asSeasonGame({
+          ...game,
+          homeTeamId,
+          awayTeamId,
+          homeTeamExternal: false,
+          awayTeamExternal: false
+        })
+        return { homeTeamId: row.homeTeamId, awayTeamId: row.awayTeamId }
+      })
+    ).deep.equals(named)
+  })
+
+  it('reads an empty id as an open side in a game’s page', function () {
+    expect(
+      sides((homeTeamId, awayTeamId) => {
+        const detail = asGameDetail({
+          ...game,
+          nonMemberView: false,
+          endAt: null,
+          videos: [],
+          ingestMessage: null,
+          canScore: false,
+          replayable: false,
+          homeTeamId,
+          awayTeamId
+        })
+        return { homeTeamId: detail.homeTeamId, awayTeamId: detail.awayTeamId }
+      })
+    ).deep.equals(named)
+  })
+
+  it('reads an empty id as an open side on a fan’s schedule and a public one', function () {
+    const entry = (homeTeamId: string, awayTeamId: string): unknown => {
+      const row = asScheduleEntry({
+        gameId: 'gam_1',
+        startsAt: '2027-04-03T17:00:00.000Z',
+        homeTeam: { id: homeTeamId, name: 'Demo Hawks' },
+        awayTeam: { id: awayTeamId, name: 'TBD' },
+        venue: null
+      })
+      return { homeTeamId: row.homeTeam.id, awayTeamId: row.awayTeam.id }
+    }
+    expect(sides(entry)).deep.equals(named)
+    const publicRow = asPublicGame({
+      id: 'gam_1',
+      homeTeam: { id: 'tem_hawks', name: 'Demo Hawks' },
+      awayTeam: { id: '', name: 'TBD' },
+      seasonId: null,
+      startAt: '2027-04-03T17:00:00.000Z',
+      venue: null,
+      status: 'scheduled',
+      homeScore: null,
+      awayScore: null
+    })
+    expect(publicRow.homeTeam.id).equals('tem_hawks')
+    expect(publicRow.awayTeam).deep.equals({ id: null, name: 'TBD' })
+  })
+
+  it('reads an empty id as an open side on the umpire schedule, and an absent one as none', function () {
+    const row = {
+      id: 'gam_1',
+      seasonId: 'sea_1',
+      seasonName: 'Spring',
+      levelId: 'lvl_1',
+      levelName: '10U',
+      startAt: '2027-04-03T17:00:00.000Z',
+      endAt: null,
+      timezone: 'UTC',
+      date: '2027-04-03',
+      status: 'scheduled',
+      home: 'Demo Hawks',
+      away: 'TBD',
+      venue: '',
+      field: '',
+      notes: '',
+      umpireNotes: {},
+      positions: [],
+      assignments: {},
+      conflicts: [],
+      choices: {}
+    }
+    expect(
+      sides((homeTeamId, awayTeamId) => {
+        const read = asUmpireGameRow({ ...row, homeTeamId, awayTeamId })
+        return { homeTeamId: read.homeTeamId, awayTeamId: read.awayTeamId }
+      })
+    ).deep.equals(named)
+    expect(asUmpireGameRow(row).awayTeamId).equals(undefined)
+  })
+
+  it('reads an empty id as an open side in the games kept to score offline', async function () {
+    const stub = stubFetch(200, {
+      games: [
+        {
+          id: 'gam_1',
+          startAt: '2027-04-03T17:00:00.000Z',
+          homeTeamId: 'tem_hawks',
+          awayTeamId: '',
+          started: false,
+          schedule: null
+        }
+      ],
+      nextBoundary: null,
+      digest: 'd1'
+    })
+    const client = new TeamStationClient({
+      baseUrl: '/api/v1',
+      fetch: stub.fetch
+    })
+    const [kept] = (await client.offlineScoring()).games
+    expect(kept).includes({ homeTeamId: 'tem_hawks', awayTeamId: null })
   })
 })

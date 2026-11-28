@@ -1,5 +1,6 @@
 import { createDevelopmentSession } from '../app/scoring/developmentSession'
 import { asRosterEntry, type GameDetail, type RosterEntry } from '../common/api'
+import { withNamedSides } from '../common/openSides'
 import type { GameState } from '../common/scoring/state'
 import { userIdOfGumbo } from '../common/userId'
 
@@ -24,7 +25,7 @@ export function scoringRoster(firstId: number): RosterEntry[] {
 /** A full guest lineup for tests whose subject is scoring an already set up game. */
 export function scoringSession(game: GameDetail): GameState {
   const state = createDevelopmentSession(
-    game,
+    withNamedSides(game),
     scoringRoster(1),
     scoringRoster(10)
   )
