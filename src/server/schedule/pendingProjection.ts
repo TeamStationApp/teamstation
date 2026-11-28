@@ -3,6 +3,11 @@ import { type Kysely, type RawBuilder, sql } from 'kysely'
 import { HttpError } from '../../common/errors'
 import type { GameRequestTerms } from '../../common/gameApprovals'
 import type { GroupRef } from '../../common/groupCreation'
+import {
+  namedTeamIds,
+  OPEN_SIDE_NAME,
+  wireSideId
+} from '../../common/openSides'
 import { roleScopes, type VisibleScopes, visibleScopes } from '../access'
 import type { Actor } from '../auth/sessions'
 import type { Database } from '../db/database'
@@ -42,6 +47,14 @@ export interface PendingLookup {
   seasonIds?: string[]
   visible?: VisibleScopes
   includeNew?: boolean
+}
+
+/** An open side as a pending row names it: TBD, external, with no logo. */
+const OPEN_TEAM = {
+  id: wireSideId(null),
+  name: OPEN_SIDE_NAME,
+  kind: 'external' as 'external' | 'full',
+  logo_path: null as string | null
 }
 
 /** Minimal published schedule information; request terms never leave this helper. */
@@ -122,8 +135,7 @@ export async function pendingSchedule(
       requests.flatMap(request => {
         const terms = request.terms as GameRequestTerms
         return [
-          terms.game.homeTeamId,
-          terms.game.awayTeamId,
+          ...namedTeamIds(terms.game.homeTeamId, terms.game.awayTeamId),
           ...(request.sender_scope_type === 'team'
             ? [request.sender_scope_id]
             : [])
@@ -220,18 +232,25 @@ export async function pendingSchedule(
   const result: PendingSchedule[] = []
   for (const request of requests) {
     const terms = request.terms as GameRequestTerms
-    const home = names.get(terms.game.homeTeamId)
-    const away = names.get(terms.game.awayTeamId)
+    // An open side is named TBD, with no team to look up.
+    const sideTeam = (id: string | null): typeof OPEN_TEAM | undefined =>
+      id == null ? OPEN_TEAM : names.get(id)
+    const home = sideTeam(terms.game.homeTeamId)
+    const away = sideTeam(terms.game.awayTeamId)
     if (home == null || away == null) continue
     const authorized = [
-      { kind: 'team' as const, id: home.id },
-      { kind: 'team' as const, id: away.id },
+      ...namedTeamIds(terms.game.homeTeamId, terms.game.awayTeamId).map(id => ({
+        kind: 'team' as const,
+        id
+      })),
       { kind: request.sender_scope_type!, id: request.sender_scope_id! }
     ].some(administers)
     result.push({
       existingGameId: terms.gameId ?? request.game_id,
       id: terms.proposedGameId ?? `pending:${request.id}`,
-      affectedTeamIds: terms.affectedTeamIds ?? [home.id, away.id],
+      affectedTeamIds:
+        terms.affectedTeamIds ??
+        namedTeamIds(terms.game.homeTeamId, terms.game.awayTeamId),
       hostSeasonIds:
         terms.hostSeasonIds ??
         (terms.game.seasonId == null ? [] : [terms.game.seasonId]),

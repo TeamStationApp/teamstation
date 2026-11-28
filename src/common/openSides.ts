@@ -32,3 +32,13 @@ export const openSidesOf = (game: {
   if (game.awayTeamId == null) sides.push('away')
   return sides
 }
+
+/**
+ * A side's team name from names read by id: TBD for an open side, and
+ * `unknown` for a team whose name was not read.
+ */
+export const sideName = (
+  names: Readonly<Record<string, string>>,
+  teamId: string | null,
+  unknown: string
+): string => (teamId == null ? OPEN_SIDE_NAME : (names[teamId] ?? unknown))

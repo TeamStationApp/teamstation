@@ -19,6 +19,7 @@ import {
   type GroupRef,
   isRecord
 } from './groupCreation'
+import { asSideTeamId } from './openSides'
 import { asSwapEffect } from './scoring/playsLost'
 import { asFieldSizeChoice } from './venues'
 const nullableText = (raw: unknown): string | null =>
@@ -26,10 +27,13 @@ const nullableText = (raw: unknown): string | null =>
 /** A missing key stays missing; `null` stays `null`, which clears the field. */
 const fieldKey = (raw: unknown): string | null | undefined =>
   raw === undefined ? undefined : raw === null ? null : asString(raw)
+/** A side's team as an answer gives it: `''` (or `null`) for an open side. */
+const asIntentSide = (raw: unknown): string | null =>
+  raw === null ? null : asSideTeamId(raw)
 const asGameIntentBase = withEventMetadata(
   asObject({
-    homeTeamId: asString,
-    awayTeamId: asString,
+    homeTeamId: asIntentSide,
+    awayTeamId: asIntentSide,
     seasonId: nullableText,
     startAt: asString,
     venue: nullableText,
@@ -115,8 +119,9 @@ export const asGameScheduleProposal = asObject({
 export type GameScheduleProposal = ReturnType<typeof asGameScheduleProposal>
 
 export interface GameIntent extends EventLocationFields {
-  homeTeamId: string
-  awayTeamId: string
+  /** `null` for an open side: a team not chosen yet, shown as TBD. */
+  homeTeamId: string | null
+  awayTeamId: string | null
   seasonId: string | null
   startAt: string
   venue: string | null
@@ -194,10 +199,17 @@ export function asGameProposal(raw: unknown): GameProposal {
   const sender = asGroupRef(raw.sender)
   if (sender.kind === 'league')
     throw new TypeError('Choose the season that hosts this game')
-  const homeTeamId = requiredId(raw.game.homeTeamId)
-  const awayTeamId = requiredId(raw.game.awayTeamId)
-  if (homeTeamId === awayTeamId)
+  // `null` leaves a side open; an empty or missing id is still refused.
+  const homeTeamId =
+    raw.game.homeTeamId === null ? null : requiredId(raw.game.homeTeamId)
+  const awayTeamId =
+    raw.game.awayTeamId === null ? null : requiredId(raw.game.awayTeamId)
+  if (homeTeamId != null && homeTeamId === awayTeamId)
     throw new TypeError('Choose two different teams')
+  if (homeTeamId == null && awayTeamId == null && sender.kind !== 'season')
+    throw new TypeError(
+      'Choose at least one team, or send the game from its season'
+    )
   if (
     typeof raw.game.startAt !== 'string' ||
     !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}.*(Z|[+-]\d{2}:\d{2})$/.test(

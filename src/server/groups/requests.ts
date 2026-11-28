@@ -14,6 +14,7 @@ import type {
   RelationshipInvitation,
   RequestTerms
 } from '../../common/notifications'
+import { namedTeamIds } from '../../common/openSides'
 import {
   canCoach,
   canFilm,
@@ -153,11 +154,11 @@ export function relationshipSides(
             : String(terms.recipientUserId)
       }
     ]
+  // A game's named teams: an open side has nobody to consent.
   if (terms.kind === 'game')
-    return [
-      { kind: 'team', id: terms.game.homeTeamId },
-      { kind: 'team', id: terms.game.awayTeamId }
-    ]
+    return namedTeamIds(terms.game.homeTeamId, terms.game.awayTeamId).map(
+      id => ({ kind: 'team', id })
+    )
   if (terms.kind === 'parent') {
     const refs = terms.preview.actions
       .filter(action => action.operation === 'attach')

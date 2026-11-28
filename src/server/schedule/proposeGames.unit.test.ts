@@ -515,6 +515,32 @@ describe('proposing new games together', () => {
     expect(m.tables.group_requests).lengthOf(1)
   })
 
+  it('proposes games with an open side as one at a time does, asking only the named teams', async () => {
+    const bodies = [
+      body(5, { awayTeamId: null }),
+      body(6, { homeTeamId: null, awayTeamId: null })
+    ]
+    const both = await bothWays(bodies)
+    expect(both.together.rows).deep.equals(both.oneByOne.rows)
+    expect(both.together.answer).equals(both.oneByOne.answer)
+    const games = both.together.rows.tables.games.map(
+      row => JSON.parse(row) as Record<string, unknown>
+    )
+    expect(games.map(row => [row.home_team_id, row.away_team_id])).deep.members(
+      [
+        [null, null],
+        ['tem_home5', null]
+      ]
+    )
+    // One side asked of the one-side game, none of the both-open one.
+    const sides = both.together.rows.tables.group_request_sides.map(
+      row => JSON.parse(row) as Record<string, unknown>
+    )
+    expect(sides.map(side => side.scope_id)).deep.equals(['tem_home5'])
+    // Its named team is told; nobody is told of an open side.
+    expect(both.together.rows.told.join(' ')).not.includes('null')
+  })
+
   it('answers nothing for no games', async () => {
     const nothing: object = {}
     expect(
@@ -536,8 +562,8 @@ describe('proposing new games together', () => {
       return {
         key: `game${n}`,
         seasonId: 'sea_a',
-        homeTeamId: each.game.homeTeamId,
-        awayTeamId: each.game.awayTeamId,
+        homeTeamId: each.game.homeTeamId!,
+        awayTeamId: each.game.awayTeamId!,
         startAt: each.game.startAt,
         endAt: each.game.endAt!,
         fieldId: n === 2 ? 'fld_b' : 'fld_a',
@@ -719,6 +745,24 @@ describe('a season’s game consent', () => {
         expect(reads).equals(1)
         expect(
           await seasonGameConsent(db, actor, game('tem_a', 'tem_a'))
+        ).equals(false)
+        // An open side needs no consent; each named side must be a member.
+        const open = (
+          home: string | null,
+          away: string | null
+        ): GameProposal['game'] => ({
+          ...body(1).game,
+          homeTeamId: home,
+          awayTeamId: away
+        })
+        expect(await seasonGameConsent(db, actor, open('tem_a', null))).equals(
+          true
+        )
+        expect(await seasonGameConsent(db, actor, open(null, null))).equals(
+          true
+        )
+        expect(
+          await seasonGameConsent(db, actor, open(null, 'tem_left'))
         ).equals(false)
         expect(
           await seasonGameConsent(db, actor, {

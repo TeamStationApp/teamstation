@@ -3,7 +3,6 @@ import { type Kysely, sql, type Transaction } from 'kysely'
 import { HttpError } from '../../common/errors'
 import { type GameIntent, systemCancelled } from '../../common/gameApprovals'
 import { makeId } from '../../common/ids'
-import { wireSideId } from '../../common/openSides'
 import {
   asScheduleGameRow,
   type GameStatus,
@@ -387,8 +386,9 @@ async function applyRow(
     if (held != null) {
       context.withdrawn = systemCancelled(held.cancellation_reason)
       context.previous = {
-        homeTeamId: wireSideId(held.home_team_id),
-        awayTeamId: wireSideId(held.away_team_id),
+        // `null` for an open side, as `materialGame` carries it.
+        homeTeamId: held.home_team_id,
+        awayTeamId: held.away_team_id,
         seasonId: held.season_id,
         startAt: held.start_at.toISOString(),
         venue: held.venue,

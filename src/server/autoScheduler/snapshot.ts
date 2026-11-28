@@ -173,8 +173,8 @@ export async function pendingSchedulerProposals(
     out.push({
       key: terms.proposedGameId,
       seasonId: terms.game.seasonId,
-      homeTeamId: terms.game.homeTeamId,
-      awayTeamId: terms.game.awayTeamId,
+      homeTeamId: wireSideId(terms.game.homeTeamId),
+      awayTeamId: wireSideId(terms.game.awayTeamId),
       exhibition: terms.game.exhibition ?? false,
       fieldId: terms.game.fieldId ?? null,
       size: sizeOf(terms.game.fieldSize),

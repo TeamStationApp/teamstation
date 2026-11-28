@@ -29,7 +29,7 @@ import {
 } from '../../common/gameApprovals'
 import type { GroupRef } from '../../common/groupCreation'
 import { makeId } from '../../common/ids'
-import { namedTeamIds, wireSideId } from '../../common/openSides'
+import { namedTeamIds, openSidesOf, wireSideId } from '../../common/openSides'
 import {
   type PlaysLost,
   playsLost,
@@ -55,6 +55,7 @@ import { nameOnce, readOnce, withRolesRead } from '../db/readOnce'
 import { runsOf } from '../db/runs'
 import { atBatOf } from '../events/atBatInProgress'
 import { playsDigest, readPlays } from '../events/postPlays'
+import { hasNamedSides } from '../games/namedSides'
 import { gameSwapEffect } from '../games/swapEffect'
 import { maySwapSides, SWAP_REFUSED, swapGameSides } from '../games/swapSides'
 import {
@@ -121,11 +122,10 @@ export async function requireImmediateGameConsent(
         `A hosting season administrator of ${season?.name ?? 'its season'} must authorize season placement`
       )
     }
-    // An open side (`materialGame` gives it the id `''`) has no team to ask.
+    // An open side has no team to ask.
     if (!(await seasonGameConsent(db, fresh, game)))
-      for (const id of [game.homeTeamId, game.awayTeamId])
-        if (id !== wireSideId(null))
-          sides.set(`team:${id}`, { kind: 'team', id })
+      for (const id of namedTeamIds(game.homeTeamId, game.awayTeamId))
+        sides.set(`team:${id}`, { kind: 'team', id })
   }
   for (const side of sides.values()) {
     if (!(await canAdminister(db, fresh, side)))
@@ -135,9 +135,9 @@ export async function requireImmediateGameConsent(
 export function materialGame(game: GameRow): GameIntent {
   return {
     ...storedEventFields(game),
-    // An open side reads as no team until a proposal may leave one open.
-    homeTeamId: wireSideId(game.home_team_id),
-    awayTeamId: wireSideId(game.away_team_id),
+    // `null` for an open side, so the version covers it.
+    homeTeamId: game.home_team_id,
+    awayTeamId: game.away_team_id,
     seasonId: game.season_id,
     startAt: game.start_at.toISOString(),
     venue: game.venue,
@@ -151,6 +151,21 @@ export function materialGame(game: GameRow): GameIntent {
       ? {}
       : { fieldId: game.field_id, fieldSize: game.field_size })
   }
+}
+/** A game as an answer gives it: an open side's id is `''` (`wireSideId`). */
+export function wireGame(game: GameIntent): GameIntent {
+  return {
+    ...game,
+    homeTeamId: wireSideId(game.homeTeamId),
+    awayTeamId: wireSideId(game.awayTeamId)
+  }
+}
+/** A side's team followed through merges; an open side stays open. */
+async function followSide(
+  db: Kysely<Database>,
+  teamId: string | null
+): Promise<string | null> {
+  return teamId == null ? null : await followMerges(db, teamId)
 }
 export function gameVersion(game: GameIntent): string {
   return createHash('sha256').update(JSON.stringify(game)).digest('hex')
@@ -207,17 +222,28 @@ async function lockForSwap(
   // Compared as the request will be, a merged-away team named as the one it
   // became.
   if (
-    teams.home_team_id === (await followMerges(trx, game.awayTeamId)) &&
-    teams.away_team_id === (await followMerges(trx, game.homeTeamId))
+    teams.home_team_id !== teams.away_team_id &&
+    teams.home_team_id === (await followSide(trx, game.awayTeamId)) &&
+    teams.away_team_id === (await followSide(trx, game.homeTeamId))
   )
     await lockPlayerEdits(trx)
 }
-/** Whether a change keeps the game's two teams and exchanges their sides. */
+/**
+ * Whether a change keeps the game's two teams and exchanges their sides. An
+ * open side is a side: a swap exchanges it with the named team. A game with
+ * both sides open has nothing to exchange.
+ */
 function swapsSides(old: GameRow, game: GameIntent): boolean {
   return (
-    old.home_team_id === game.awayTeamId && old.away_team_id === game.homeTeamId
+    old.home_team_id !== old.away_team_id &&
+    old.home_team_id === game.awayTeamId &&
+    old.away_team_id === game.homeTeamId
   )
 }
+
+/** The refusal of an edit that would leave a named side open. */
+export const SIDE_CLEARED =
+  'A side’s team cannot be cleared; withdraw from the game instead'
 
 /** The refusal of a scorekeeper's swap from Game Settings once play began. */
 export const SCORER_SWAP_BEGUN =
@@ -235,8 +261,8 @@ async function onlySidesSwapped(
   if (!swapsSides(old, game)) return false
   const kept: GameIntent = {
     ...materialGame(old),
-    homeTeamId: wireSideId(old.away_team_id),
-    awayTeamId: wireSideId(old.home_team_id)
+    homeTeamId: old.away_team_id,
+    awayTeamId: old.home_team_id
   }
   const canonical = async (intent: GameIntent): Promise<GameIntent> => ({
     ...(await normalizedIntent(db, intent, old.timezone)),
@@ -276,8 +302,8 @@ async function scorerSwap(
   const game: GameIntent = {
     ...body.game,
     ...preservedEventFields(body.game, old),
-    homeTeamId: await followMerges(trx, body.game.homeTeamId),
-    awayTeamId: await followMerges(trx, body.game.awayTeamId),
+    homeTeamId: await followSide(trx, body.game.homeTeamId),
+    awayTeamId: await followSide(trx, body.game.awayTeamId),
     timezone: old.timezone,
     exhibition: body.game.exhibition ?? old.exhibition,
     ...preservedField(body.game, old)
@@ -300,7 +326,7 @@ async function scorerSwap(
     gameId: old.id,
     proposedGameId: old.id,
     replacesGameId: null,
-    consentTeamIds: [game.homeTeamId, game.awayTeamId],
+    consentTeamIds: namedTeamIds(game.homeTeamId, game.awayTeamId),
     expected: gameVersion(materialGame(old)),
     previous: materialGame(old),
     affectedTeamIds: [...teamIds].sort(),
@@ -338,8 +364,8 @@ async function scorerSwap(
 }
 /**
  * Home and away may swap until the first pitch. Another team may replace
- * one only while nothing has been scored: no play, no at-bat open, not
- * under way.
+ * one, or be given an open side, only while nothing has been scored: no
+ * play, no at-bat open, not under way. A named side never becomes open.
  */
 async function requireEditableTeams(
   db: Kysely<Database>,
@@ -355,6 +381,11 @@ async function requireEditableTeams(
     if (!(await maySwapSides(db, old))) throw conflict(SWAP_REFUSED)
     return
   }
+  if (
+    (old.home_team_id != null && game.homeTeamId == null) ||
+    (old.away_team_id != null && game.awayTeamId == null)
+  )
+    throw conflict(SIDE_CLEARED)
   const played = await db
     .selectFrom('events')
     .select('id')
@@ -404,8 +435,7 @@ async function notifyProposalChange(
 function noteProposedGame(db: Kysely<Database>, terms: GameRequestTerms): void {
   if (terms.gameId != null) return
   const teams = new Set([
-    terms.game.homeTeamId,
-    terms.game.awayTeamId,
+    ...namedTeamIds(terms.game.homeTeamId, terms.game.awayTeamId),
     ...terms.affectedTeamIds
   ])
   for (const teamId of teams) noteScopeChange(db, { teamId })
@@ -535,9 +565,10 @@ async function validateGame(
   db: Kysely<Database>,
   intent: GameIntent
 ): Promise<void> {
-  if (intent.homeTeamId === intent.awayTeamId)
+  if (intent.homeTeamId != null && intent.homeTeamId === intent.awayTeamId)
     throw badRequest('Choose two different teams')
-  for (const id of [intent.homeTeamId, intent.awayTeamId]) {
+  // Only the named sides: an open side has no team to check.
+  for (const id of namedTeamIds(intent.homeTeamId, intent.awayTeamId)) {
     const team = await teamFacts(db, id)
     if (team == null || team.merged_into != null)
       throw notFound('Choose a current team')
@@ -625,12 +656,18 @@ async function currentAdministrator(
     throw error
   }
 }
+/**
+ * Whether a person may change a game as one of its original administrators:
+ * an administrator of a named team, or, for a game with an open side, of
+ * its hosting season, so a season's game with both sides open has somebody
+ * who may change it.
+ */
 async function originalAdministrator(
   db: Kysely<Database>,
   userId: string,
   game: GameIntent
 ): Promise<boolean> {
-  for (const id of [game.homeTeamId, game.awayTeamId])
+  for (const id of namedTeamIds(game.homeTeamId, game.awayTeamId))
     if (
       await currentAdministrator(db, userId, {
         kind: 'team',
@@ -638,7 +675,14 @@ async function originalAdministrator(
       })
     )
       return true
-  return false
+  return (
+    openSidesOf(game).length > 0 &&
+    game.seasonId != null &&
+    (await currentAdministrator(db, userId, {
+      kind: 'season',
+      id: game.seasonId
+    }))
+  )
 }
 async function normalizedIntent(
   db: Kysely<Database>,
@@ -647,8 +691,8 @@ async function normalizedIntent(
 ): Promise<GameIntent> {
   return {
     ...asEventLocationFields({ ...game }, game.startAt),
-    homeTeamId: await followMerges(db, game.homeTeamId),
-    awayTeamId: await followMerges(db, game.awayTeamId),
+    homeTeamId: await followSide(db, game.homeTeamId),
+    awayTeamId: await followSide(db, game.awayTeamId),
     seasonId: game.seasonId,
     startAt: new Date(game.startAt).toISOString(),
     venue: game.venue ?? null,
@@ -875,8 +919,10 @@ export async function finishGameRequest(
     }
     await requireEditableTeams(trx, current, terms.game)
     // Everything naming a side follows its team; the update below then
-    // finds the team ids already in place.
-    if (swapsSides(current, terms.game)) await swapGameSides(trx, gameId)
+    // finds the team ids already in place. A game with an open side has
+    // nothing keyed by its teams yet: the update alone exchanges them.
+    if (swapsSides(current, terms.game) && hasNamedSides(current))
+      await swapGameSides(trx, gameId)
     previousFieldId = current.field_id
     cancelsSchedulerGame =
       current.schedule_preview_id != null &&
@@ -1042,8 +1088,8 @@ async function proposalTerms(
   const game = {
     ...body.game,
     ...preservedEventFields(body.game, old),
-    homeTeamId: await followMerges(trx, body.game.homeTeamId),
-    awayTeamId: await followMerges(trx, body.game.awayTeamId),
+    homeTeamId: await followSide(trx, body.game.homeTeamId),
+    awayTeamId: await followSide(trx, body.game.awayTeamId),
     timezone: asGameTimezone(
       body.game.timezone ??
         old?.timezone ??
@@ -1099,14 +1145,20 @@ async function proposalTerms(
     )
   const prior =
     old == null ? (resumedTerms?.previous ?? null) : materialGame(old)
-  const originalIds = prior == null ? [] : [prior.homeTeamId, prior.awayTeamId]
-  const proposedIds = [game.homeTeamId, game.awayTeamId]
+  // The named teams only: an open side is no participant, and giving it a
+  // team removes nobody, so it is never a replacement.
+  const originalIds =
+    prior == null ? [] : namedTeamIds(prior.homeTeamId, prior.awayTeamId)
+  const proposedIds = namedTeamIds(game.homeTeamId, game.awayTeamId)
   const affectedTeamIds = [...new Set([...proposedIds, ...originalIds])].sort()
   const administered: string[] = []
   for (const teamId of affectedTeamIds)
     if (await canScheduleFor(trx, fresh, { kind: 'team', id: teamId }))
       administered.push(teamId)
-  const hostOnlyCreation = old == null && body.sender.kind === 'season'
+  // A season sends a new game, or changes its own game with an open side.
+  const hostOnlyCreation =
+    body.sender.kind === 'season' &&
+    (old == null || openSidesOf(materialGame(old)).length > 0)
   if (administered.length === 0 && !hostOnlyCreation)
     throw forbidden(
       'A participating team administrator, coach or assistant must send this game'
@@ -1661,8 +1713,11 @@ async function sendAll(
       told.push({ game: each.gameId, kind: 'game' })
       // Published: its season's row and its teams' lists.
       noteScopeChange(trx, { gameId: each.gameId })
-      noteScopeChange(trx, { teamId: terms.game.homeTeamId })
-      noteScopeChange(trx, { teamId: terms.game.awayTeamId })
+      for (const teamId of namedTeamIds(
+        terms.game.homeTeamId,
+        terms.game.awayTeamId
+      ))
+        noteScopeChange(trx, { teamId })
       if (terms.game.seasonId != null)
         noteScopeChange(trx, { seasonId: terms.game.seasonId })
     }
@@ -2144,8 +2199,8 @@ export async function scheduleProposals(
     result.push({
       requestId: request.id,
       gameId: request.game_id,
-      game: terms.game,
-      previous: terms.previous,
+      game: wireGame(terms.game),
+      previous: terms.previous == null ? null : wireGame(terms.previous),
       status,
       sentAt: request.sent_at.toISOString(),
       canDelete: status === 'declined' && (await canAdminister(db, fresh, ref)),
@@ -2197,7 +2252,13 @@ export async function schedulingGame(
   // A scorekeeper of either team may swap home and away, and nothing else.
   const roles = await roleScopes(db, fresh.userId, fresh.isAdmin)
   const scorer = sideTeams.some(teamId => canScore(roles, teamId))
-  if (teamIds.length === 0 && !scorer) throw forbidden()
+  // A game with an open side is its season's to change as well
+  // (`originalAdministrator`), whoever administers its named teams.
+  const seasonHost =
+    openSidesOf(materialGame(row)).length > 0 &&
+    row.season_id != null &&
+    (await canScheduleFor(db, fresh, { kind: 'season', id: row.season_id }))
+  if (teamIds.length === 0 && !scorer && !seasonHost) throw forbidden()
   const withdrawn = systemCancelled(row.cancellation_reason)
   const current = atBatOf(row, stored.length > 0)
   // What a swap would do, as the swap route decides it.
@@ -2206,9 +2267,9 @@ export async function schedulingGame(
     stored.map(play => play.gumbo)
   )
   return {
-    game: materialGame(row),
+    game: wireGame(materialGame(row)),
     version: gameVersion(materialGame(row)),
-    canPropose: teamIds.length > 0 && !withdrawn,
+    canPropose: (teamIds.length > 0 || seasonHost) && !withdrawn,
     withdrawTeamIds: teamIds,
     administeredTeamIds: teamIds,
     canSwap: scorer && (effect === 'swap' || effect === 'reset'),

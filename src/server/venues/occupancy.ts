@@ -2,7 +2,7 @@ import { type Kysely, sql } from 'kysely'
 
 import { DEFAULT_EVENT_DURATION_MS } from '../../common/eventTime'
 import type { GameRequestTerms } from '../../common/gameApprovals'
-import { wireSideId } from '../../common/openSides'
+import { namedTeamIds, wireSideId } from '../../common/openSides'
 import type { Database } from '../db/database'
 import type { Clock } from '../groups/requests'
 
@@ -153,8 +153,9 @@ export async function occupancy(
     if (key == null) continue
     if (game.status === 'cancelled') continue
     const onField = game.fieldId != null && fieldIds.includes(game.fieldId)
-    const ofTeam =
-      teamIds.includes(game.homeTeamId) || teamIds.includes(game.awayTeamId)
+    // An open side is no team's: it holds nobody's time.
+    const sides = namedTeamIds(game.homeTeamId, game.awayTeamId)
+    const ofTeam = sides.some(teamId => teamIds.includes(teamId))
     if (!onField && !ofTeam) {
       // A change moving the game away frees what its row held here.
       if (terms.gameId != null) bookings.delete(terms.gameId)
@@ -168,15 +169,14 @@ export async function occupancy(
       pending: true,
       fieldId: game.fieldId ?? null,
       size: game.fieldSize ?? null,
-      homeTeamId: game.homeTeamId,
-      awayTeamId: game.awayTeamId,
+      homeTeamId: wireSideId(game.homeTeamId),
+      awayTeamId: wireSideId(game.awayTeamId),
       seasonId: game.seasonId,
       start: start.getTime(),
       end
     }
     bookings.set(key, proposal)
-    if (keepTeams.has(game.homeTeamId) || keepTeams.has(game.awayTeamId))
-      commitments.push(proposal)
+    if (sides.some(teamId => keepTeams.has(teamId))) commitments.push(proposal)
   }
   // All intervals refer to the same underlying game. Callers replacing
   // that game must be able to leave out its pending change as well.

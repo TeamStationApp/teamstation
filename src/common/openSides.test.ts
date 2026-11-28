@@ -6,6 +6,7 @@ import {
   namedTeamIds,
   OPEN_SIDE_NAME,
   openSidesOf,
+  sideName,
   wireSideId
 } from './openSides'
 import { teamsOfRow } from './teamLists'
@@ -52,5 +53,12 @@ describe('open sides', () => {
       away: { id: '' },
       home: { id: 'a' }
     })
+  })
+
+  it('names a side by its team, TBD when open, else the fallback', () => {
+    const names = { 'team-ravens': 'Ravens' }
+    expect(sideName(names, null, 'Away team')).equals(OPEN_SIDE_NAME)
+    expect(sideName(names, 'team-ravens', 'Away team')).equals('Ravens')
+    expect(sideName(names, 'team-gone', 'Home team')).equals('Home team')
   })
 })

@@ -2,6 +2,7 @@ import type { Kysely } from 'kysely'
 
 import { eventLocalRange, zoneName } from '../../common/eventTime'
 import type { GameRequestTerms } from '../../common/gameApprovals'
+import { wireSideId } from '../../common/openSides'
 import type { Database } from '../db/database'
 import { hasNamedSides } from '../games/namedSides'
 import { adminRecipients } from '../groups/rights'
@@ -123,8 +124,9 @@ export async function requestNeedsAttention(
     {
       previewId: terms.schedulePreviewId,
       gameId: request.game_id ?? terms.gameId,
-      homeTeamId: terms.game.homeTeamId,
-      awayTeamId: terms.game.awayTeamId,
+      // A scheduler proposal names both teams; `''` would name none.
+      homeTeamId: wireSideId(terms.game.homeTeamId),
+      awayTeamId: wireSideId(terms.game.awayTeamId),
       startAt: terms.game.startAt,
       endAt: terms.game.endAt ?? null,
       timezone: terms.game.timezone ?? null

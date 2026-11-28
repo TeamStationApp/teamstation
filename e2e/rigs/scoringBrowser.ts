@@ -17,6 +17,7 @@ import {
   type RosterEntry,
   TeamStationClient
 } from '../../src/common/api'
+import { wireSideId } from '../../src/common/openSides'
 import type { ScoringAction } from '../../src/common/scoring/actions'
 import { ScoringSession } from '../../src/common/scoring/session'
 import { startingSetup, teamsOf } from '../../src/common/scoring/startingSetup'
@@ -223,8 +224,8 @@ export async function proposeSwap(
   const client = await clientOf(fixture, who)
   const state = await client.gameScheduling(fixture.gameId)
   const [home, away] = await Promise.all([
-    client.group({ kind: 'team', id: state.game.homeTeamId }),
-    client.group({ kind: 'team', id: state.game.awayTeamId })
+    client.group({ kind: 'team', id: wireSideId(state.game.homeTeamId) }),
+    client.group({ kind: 'team', id: wireSideId(state.game.awayTeamId) })
   ])
   const draft = swapSides(
     loadedGameDraft(

@@ -3,6 +3,7 @@ import { type Kysely, sql } from 'kysely'
 import type { GameRequestTerms } from '../../common/gameApprovals'
 import type { GroupRef } from '../../common/groupCreation'
 import type { PlayerAddTerms, RequestTerms } from '../../common/notifications'
+import { OPEN_SIDE_NAME } from '../../common/openSides'
 import type { Role } from '../../common/roles'
 import type { Database } from '../db/database'
 import { nameOnce, readOnce } from '../db/readOnce'
@@ -342,8 +343,11 @@ async function rendered(
     `Exhibition: ${value === true ? 'On' : 'Off'}`
   const name = lookups.group
   if (terms.kind === 'game') {
-    const home = await name({ kind: 'team', id: terms.game.homeTeamId })
-    const away = await name({ kind: 'team', id: terms.game.awayTeamId })
+    // An open side is named TBD.
+    const side = async (id: string | null): Promise<string> =>
+      id == null ? OPEN_SIDE_NAME : await name({ kind: 'team', id })
+    const home = await side(terms.game.homeTeamId)
+    const away = await side(terms.game.awayTeamId)
     const competition =
       terms.game.seasonId == null
         ? terms.game.outsideTournament == null
@@ -362,7 +366,7 @@ async function rendered(
     const prior =
       terms.previous == null
         ? ''
-        : ` Previously ${await name({ kind: 'team', id: terms.previous.awayTeamId })} at ${await name({ kind: 'team', id: terms.previous.homeTeamId })}, ${terms.previous.seasonId == null ? 'outside a TeamStation season' : 'in ' + (await name({ kind: 'season', id: terms.previous.seasonId }))}, ${await when(terms.previous.startAt, terms.previous.seasonId, terms.previous.timezone)}${terms.previous.venue == null ? '' : ' at ' + terms.previous.venue}, ${terms.previous.status}, ${exhibition(terms.previous.exhibition)}.`
+        : ` Previously ${await side(terms.previous.awayTeamId)} at ${await side(terms.previous.homeTeamId)}, ${terms.previous.seasonId == null ? 'outside a TeamStation season' : 'in ' + (await name({ kind: 'season', id: terms.previous.seasonId }))}, ${await when(terms.previous.startAt, terms.previous.seasonId, terms.previous.timezone)}${terms.previous.venue == null ? '' : ' at ' + terms.previous.venue}, ${terms.previous.status}, ${exhibition(terms.previous.exhibition)}.`
     return {
       title:
         terms.gameId == null

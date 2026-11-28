@@ -1,5 +1,26 @@
+import { OPEN_SIDE_NAME } from '../../common/openSides'
 import { FIELD_SIZES } from '../../common/venues'
 import { eventLocationProperties } from '../events/eventInfoOpenApi'
+
+/** What a proposal and the scheduling answer say of an open side. */
+const OPEN_SIDE_PROPOSAL =
+  'A side may be null: open, its team not known yet (TBD). A team sender must ' +
+  'hold a named side, so from a team only the opponent may be open; a season ' +
+  'sender may leave either side or both open. Only the named teams consent: ' +
+  'a game with both sides open asks none and is published on its hosting ' +
+  "season's authority. Until the game's first scoring write, an edit may give " +
+  'an open side a team, as a change of a side is proposed and approved; the ' +
+  "game keeps its id, and the game's season may change a game with an open " +
+  'side. A named side never becomes open; withdraw from the game instead. ' +
+  "Answers give an open side the id '' and the name " +
+  OPEN_SIDE_NAME +
+  '.'
+
+const sideProperty = {
+  type: ['string', 'null'],
+  description:
+    "The side's team; null leaves the side open (TBD). An empty string is refused."
+}
 
 export function gameApprovalPaths(
   errorResponse: unknown
@@ -29,7 +50,8 @@ export function gameApprovalPaths(
         summary: 'Propose a new game or immutable material scheduling revision',
         security: [{ bearer: [] }],
         description:
-          'An edit sender must administer an original or proposed participant. A direct or inherited hosting-season administrator may supply both team approvals when both proposed teams have active participation in that hosting season. Participation grants no general team management rights; visiting teams, inactive memberships and outside-season games keep their existing team approval requirements. Current roles and memberships are rechecked before publication. A hosting season administrator may also initiate a new game between visiting teams, contributing only team approvals they actually hold. Only the proposed home and away teams approve; inherited and placeholder-custodian authority counts. No separate hosting-season consent is required. Host-only authority cannot initiate edits to an accepted game. A submitted replacement of an unmanaged original team cancels the original event and reserves a distinct replacement ID; otherwise approved fields stay unchanged until consent. Retries preserve the same identities. Outside games keep seasonId null. Exhibition classification and timezone are independent of team identity.',
+          'An edit sender must administer an original or proposed participant. A direct or inherited hosting-season administrator may supply both team approvals when both proposed teams have active participation in that hosting season. Participation grants no general team management rights; visiting teams, inactive memberships and outside-season games keep their existing team approval requirements. Current roles and memberships are rechecked before publication. A hosting season administrator may also initiate a new game between visiting teams, contributing only team approvals they actually hold. Only the proposed home and away teams approve; inherited and placeholder-custodian authority counts. No separate hosting-season consent is required. Host-only authority cannot initiate edits to an accepted game. A submitted replacement of an unmanaged original team cancels the original event and reserves a distinct replacement ID; otherwise approved fields stay unchanged until consent. Retries preserve the same identities. Outside games keep seasonId null. Exhibition classification and timezone are independent of team identity. ' +
+          OPEN_SIDE_PROPOSAL,
         requestBody: jsonBody({
           type: 'object',
           required: ['sender', 'game', 'idempotencyKey'],
@@ -47,8 +69,8 @@ export function gameApprovalPaths(
               required: ['homeTeamId', 'awayTeamId', 'seasonId', 'startAt'],
               properties: {
                 ...eventLocationProperties,
-                homeTeamId: { type: 'string' },
-                awayTeamId: { type: 'string' },
+                homeTeamId: sideProperty,
+                awayTeamId: sideProperty,
                 seasonId: { type: ['string', 'null'] },
                 startAt: { type: 'string', format: 'date-time' },
                 venue: { type: ['string', 'null'] },
@@ -138,6 +160,12 @@ export function gameApprovalPaths(
           'Current material scheduling version and effective change/withdraw capabilities',
         security: [{ bearer: [] }],
         parameters: [pathId('gameId')],
+        description:
+          "The game's teams, an open side's id `''`. For a game with an open " +
+          'side, an administrator of its hosting season may change it too: ' +
+          'canPropose is true for them, and withdrawTeamIds and ' +
+          'administeredTeamIds list only the named teams they administer. ' +
+          OPEN_SIDE_PROPOSAL,
         responses
       }
     },

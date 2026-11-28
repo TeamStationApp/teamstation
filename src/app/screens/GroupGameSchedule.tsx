@@ -4,6 +4,7 @@ import { Text, View } from 'react-native'
 import type { TeamStationClient } from '../../common/api'
 import type { GameScheduleProposal } from '../../common/gameApprovals'
 import type { GroupRef } from '../../common/groupCreation'
+import { namedTeamIds, sideName } from '../../common/openSides'
 import { Button, Card, SectionHeader } from '../components'
 import { useNoticedRead } from '../hooks/useNoticedRead'
 import { useScreenScope } from '../hooks/useScreenScope'
@@ -31,7 +32,9 @@ export function GroupGameSchedule({
       const teams = await Promise.all(
         [
           ...new Set(
-            found.flatMap(row => [row.game.homeTeamId, row.game.awayTeamId])
+            found.flatMap(row =>
+              namedTeamIds(row.game.homeTeamId, row.game.awayTeamId)
+            )
           )
         ].map(
           async teamId =>
@@ -69,8 +72,8 @@ export function GroupGameSchedule({
       {proposals.map(proposal => (
         <Card key={proposal.requestId} style={styles.card}>
           <Text style={styles.title}>
-            {names[proposal.game.awayTeamId] ?? 'Away team'} at{' '}
-            {names[proposal.game.homeTeamId] ?? 'Home team'}
+            {sideName(names, proposal.game.awayTeamId, 'Away team')} at{' '}
+            {sideName(names, proposal.game.homeTeamId, 'Home team')}
           </Text>
           <Text style={styles.hint}>
             {new Date(proposal.game.startAt).toLocaleString()}

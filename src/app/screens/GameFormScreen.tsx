@@ -3,6 +3,7 @@ import { Pressable, Switch, Text, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import type { EventType } from '../../common/eventInfo'
+import { wireSideId } from '../../common/openSides'
 import type { PublicGroup } from '../../common/publicGroups'
 import {
   resetWarning,
@@ -173,8 +174,8 @@ export function GameFormScreen({
       }
       const state = await client.gameScheduling(gameId!)
       const [home, away] = await Promise.all([
-        client.group({ kind: 'team', id: state.game.homeTeamId }),
-        client.group({ kind: 'team', id: state.game.awayTeamId })
+        client.group({ kind: 'team', id: wireSideId(state.game.homeTeamId) }),
+        client.group({ kind: 'team', id: wireSideId(state.game.awayTeamId) })
       ])
       if (!current()) return
       setLoaded(state)
@@ -320,8 +321,9 @@ export function GameFormScreen({
       return
     }
     await client.swapGameSides(gameId, {
-      homeTeamId: loaded.game.homeTeamId,
-      awayTeamId: loaded.game.awayTeamId,
+      // The swap names an open side as its answers do: `''`.
+      homeTeamId: wireSideId(loaded.game.homeTeamId),
+      awayTeamId: wireSideId(loaded.game.awayTeamId),
       ...(plays == null
         ? {}
         : { generation: plays.generation, playsDigest: plays.playsDigest })
