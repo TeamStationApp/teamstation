@@ -31,7 +31,8 @@ import { ensureGumboId, insertUser } from '../users/insertUser'
  * The games the replay's end-to-end scenarios run against, in a development
  * database: a made-up league with one season and two teams, the replay
  * fixture's game stored four ways, a short rally game whose grand slam
- * scores three runners, and five accounts to sign in with.
+ * scores three runners, a game that has not started, and five accounts to
+ * sign in with.
  *
  *   node -r sucrase/register src/server/dev/replaySeed.ts [--password <pw>]
  *
@@ -47,7 +48,8 @@ export const REPLAY_SEED = {
     inProgress: 'gam_replaySeedLive',
     importedThenScored: 'gam_replaySeedMixed',
     imported: 'gam_replaySeedImported',
-    rally: 'gam_replaySeedRally'
+    rally: 'gam_replaySeedRally',
+    scheduled: 'gam_replaySeedScheduled'
   },
   emails: {
     team: 'replay-team@example.test',
@@ -330,6 +332,10 @@ export async function seedReplay(
     })
     .execute()
 
+  // The game being played starts last, so it is the newest played game and
+  // the home screen's hero shows it live; every other game starts a minute
+  // before it. The scheduled game is never given an event.
+  const start = clock()
   for (const id of GAME_IDS)
     await db
       .insertInto('games')
@@ -338,7 +344,10 @@ export async function seedReplay(
         home_team_id: REPLAY_TEAMS.home.id,
         away_team_id: REPLAY_TEAMS.away.id,
         season_id: REPLAY_SEED.seasonId,
-        start_at: clock(),
+        start_at:
+          id === REPLAY_SEED.games.inProgress
+            ? start
+            : new Date(start.getTime() - 60_000),
         venue: 'Replay Field',
         status: 'scheduled'
       })

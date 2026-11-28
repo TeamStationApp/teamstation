@@ -17,6 +17,7 @@ import {
 import { canScore, canSeeGame, roleScopes, visibleScopes } from '../access'
 import type { Database } from '../db/database'
 import { attachInt8Parser } from '../db/int8'
+import { hasRecordedPlays } from '../replay/replayable'
 import { pitchingLines } from '../stats'
 import { pitchingOrder } from '../stats/boxScoreOrder'
 import { statRows } from '../stats/rows'
@@ -187,6 +188,63 @@ describe('replay seed', function () {
       ).equals(false)
   })
 
+  it('stores a game that has not started, which every member sees and nothing scored', async function () {
+    const scheduled = await game(REPLAY_SEED.games.scheduled)
+    expect(scheduled.status).equals('scheduled')
+    const events = await db!
+      .selectFrom('events')
+      .select('id')
+      .where('gameId', '=', REPLAY_SEED.games.scheduled)
+      .execute()
+    expect(events).length(0)
+    expect(
+      await hasRecordedPlays(db!, REPLAY_SEED.games.scheduled, null)
+    ).equals(false)
+    const scope = {
+      homeTeamId: scheduled.homeTeamId,
+      awayTeamId: scheduled.awayTeamId,
+      seasonId: scheduled.seasonId
+    }
+    for (const key of ['team', 'season', 'league', 'scorer'] as const)
+      expect(
+        canSeeGame(
+          await visibleScopes(db!, seeded.accounts[key], false),
+          scope
+        ),
+        key
+      ).equals(true)
+    expect(
+      canSeeGame(
+        await visibleScopes(db!, seeded.accounts.outsider, false),
+        scope
+      )
+    ).equals(false)
+  })
+
+  it('starts the game being played last, so it is the newest played game', async function () {
+    const rows = await db!
+      .selectFrom('games')
+      .select(['id', 'start_at'])
+      .where('id', 'in', Object.values(REPLAY_SEED.games))
+      .execute()
+    const live = rows.find(row => row.id === REPLAY_SEED.games.inProgress)!
+    for (const row of rows)
+      if (row.id !== live.id)
+        expect(new Date(row.start_at).getTime(), row.id).lessThan(
+          new Date(live.start_at).getTime()
+        )
+    // The order the home screen's recent game reads.
+    const newest = await db!
+      .selectFrom('games')
+      .select('id')
+      .where('season_id', '=', REPLAY_SEED.seasonId)
+      .where('home_score', 'is not', null)
+      .orderBy('start_at', 'desc')
+      .orderBy('id', 'desc')
+      .executeTakeFirstOrThrow()
+    expect(newest.id).equals(REPLAY_SEED.games.inProgress)
+  })
+
   it('builds the box score, its pitchers in the order they pitched', async function () {
     const rows = await statRows(db!, { gameId: REPLAY_SEED.games.final })
     expect(rows.length).greaterThan(15)
@@ -270,7 +328,7 @@ describe('replay seed', function () {
 
   it('leaves the same rows when it runs again', async function () {
     const count = async (
-      table: 'users' | 'memberships' | 'events'
+      table: 'users' | 'memberships' | 'events' | 'games'
     ): Promise<number> =>
       Number(
         (
@@ -281,7 +339,7 @@ describe('replay seed', function () {
         ).n
       )
     const before = await Promise.all(
-      (['users', 'memberships', 'events'] as const).map(count)
+      (['users', 'memberships', 'events', 'games'] as const).map(count)
     )
     // A database seeded before players wore numbers gets them on the rerun.
     await db!
@@ -293,7 +351,7 @@ describe('replay seed', function () {
     expect(again.accounts).deep.equals(seeded.accounts)
     expect(
       await Promise.all(
-        (['users', 'memberships', 'events'] as const).map(count)
+        (['users', 'memberships', 'events', 'games'] as const).map(count)
       )
     ).deep.equals(before)
     const jerseys = await db!
