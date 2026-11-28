@@ -173,10 +173,80 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
     pending.current = drawing ? from : undefined
     paint()
     latest.current.onScroll()
+    const toEnd = endAfterAnchor.current
+    if (!drawing && toEnd != null) {
+      endAfterAnchor.current = undefined
+      releaseRef.current(toEnd)
+    }
   }, [measure, paint, scroller])
 
   const anchorRef = useRef(anchor)
   anchorRef.current = anchor
+
+  /** A `scrollToEnd` asked for while a tab waited to be anchored. */
+  const endAfterAnchor = useRef<boolean | undefined>(undefined)
+  /** Where the page is, and its end with no room kept after the content. */
+  const position = useCallback(
+    (page: HTMLElement): { y: number; end: number } => {
+      const contentBottom =
+        (content.current?.getBoundingClientRect().bottom ?? 0) -
+        page.getBoundingClientRect().top +
+        page.scrollTop
+      return {
+        y: page.scrollTop,
+        end: Math.max(
+          pinAt.current + (lastOffset.current ?? 0),
+          contentBottom + latest.current.tail - page.clientHeight
+        )
+      }
+    },
+    []
+  )
+
+  /**
+   * The page sent to its end with only the room the anchor needs after the
+   * content: none kept for where the page was. The end is recorded as the
+   * head's, so the browser pulling the page back as that room goes is not
+   * taken for a shrink to undo.
+   */
+  const release = useCallback(
+    (animated: boolean): void => {
+      const page = scroller()
+      if (page == null || lastOffset.current == null) return
+      const { pinAt: pin, contentBottom, viewport } = measure()
+      pinAt.current = pin
+      const bottom = contentBottom + latest.current.tail
+      const reach = lastOffset.current + pin
+      if (spacer.current != null)
+        spacer.current.style.height = `${spacerFor(reach, bottom, viewport)}px`
+      const end = Math.max(reach, bottom - viewport)
+      pageEnd.current = end
+      rowHold.current = undefined
+      if (animated && typeof page.scrollTo === 'function') {
+        // Wherever the page stands once the room is gone; the smooth scroll's
+        // own events carry the head on from there.
+        state.current = scrolled(state.current, Math.min(page.scrollTop, end))
+        page.scrollTo({ top: end, behavior: 'smooth' })
+      } else {
+        page.scrollTop = end
+        state.current = scrolled(state.current, end)
+      }
+      paint()
+      latest.current.onScroll()
+      latest.current.onPosition?.({ y: state.current.y, end })
+    },
+    [measure, paint, scroller]
+  )
+  const releaseRef = useRef(release)
+  releaseRef.current = release
+
+  const scrollToEnd = useCallback((animated: boolean): void => {
+    if (pending.current != null) {
+      endAfterAnchor.current = animated
+      return
+    }
+    releaseRef.current(animated)
+  }, [])
 
   // After every commit: a tab selected (or the first load) is anchored as soon
   // as its content is on the page, before the browser paints it.
@@ -212,6 +282,11 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
     if (hold != null && page != null) {
       pending.current = hold.from
       anchorRef.current()
+      return
+    }
+    // Following its end: the page goes to the new end, with no room kept.
+    if (latest.current.followEnd === true) {
+      releaseRef.current(false)
       return
     }
     const { pinAt: pin, contentBottom, viewport } = measure()
@@ -293,6 +368,11 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
         pageEnd.current = page.scrollHeight - page.clientHeight
         return
       }
+      // Following its end: left at the new end, with no room under it.
+      if (latest.current.followEnd === true) {
+        releaseRef.current(false)
+        return
+      }
       if (spacer.current != null) {
         const now = spacer.current.getBoundingClientRect().height
         spacer.current.style.height = `${now + (at - y)}px`
@@ -316,12 +396,15 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
         : { ...state.current, y }
     paint()
     latest.current.onScroll()
-  }, [paint, scroller])
+    if (page != null && latest.current.onPosition != null)
+      latest.current.onPosition(position(page))
+  }, [paint, position, scroller])
 
   const select = useCallback(
     (_tab: string): void => {
       pending.current = { ...state.current }
       rowHold.current = undefined
+      endAfterAnchor.current = undefined
       // Room for wherever the page is now, whatever the new tab's height, so
       // the browser cannot clamp the page while the new content lands.
       const page = scroller()
@@ -377,8 +460,9 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
         },
         style: NO_STYLE
       },
-      select
+      select,
+      scrollToEnd
     }),
-    [cardRef, onScroll, select]
+    [cardRef, onScroll, scrollToEnd, select]
   )
 }
