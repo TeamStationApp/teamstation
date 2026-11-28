@@ -80,10 +80,14 @@ function fakeForm(options: FormOptions = {}): {
           'Use a sign-in code'
         ]
   }
+  // A control named exactly so comes first, as a browser's buttons do.
   const find = (text: string): string | undefined =>
     /[\^$()[\]?*+|]/.test(text)
       ? labels().find(label => new RegExp(text).test(label))
-      : labels().find(label => label.toLowerCase().includes(text.toLowerCase()))
+      : (labels().find(label => label === text) ??
+        labels().find(label =>
+          label.toLowerCase().includes(text.toLowerCase())
+        ))
   const send = (): void => {
     state.sends++
     state.sent.push({ email: state.email, password: state.password })

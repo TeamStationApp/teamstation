@@ -95,7 +95,9 @@ async function sendCredentials(
     await device.hideKeyboard()
     if (await visible(device, mark, 2000)) return
   }
-  await device.tapOn({ text: '^Sign in$' })
+  // Plain text: a browser looks among its buttons first, where a regex
+  // would find the header's own "Sign in" title before the form's button.
+  await device.tapOn({ text: 'Sign in' })
 }
 
 export interface SignInOptions {
