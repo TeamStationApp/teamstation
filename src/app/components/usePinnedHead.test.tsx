@@ -36,11 +36,15 @@ interface HarnessProps {
   anchorOnRow: boolean
   /** Its page drawn after it slides in, as `TabPages` keeps one. */
   late?: boolean
+  /** Asks where the page is, into `positions`. */
+  track?: boolean
+  followEnd?: boolean
 }
 
 let head: PinnedHead | undefined
 let drawPage: (() => void) | undefined
 const calls: string[] = []
+const positions: Array<{ y: number; end: number }> = []
 const named = (name: string): HTMLElement =>
   document.querySelector<HTMLElement>(`[data-name="${name}"]`)!
 
@@ -63,8 +67,14 @@ function LatePage(props: { head: PinnedHead }): React.ReactElement {
 }
 
 function Harness(props: HarnessProps): React.ReactElement {
-  const { tab, ready, anchorOnRow, late = false } = props
+  const { tab, ready, anchorOnRow, late = false, track = false } = props
   head = usePinnedHead({
+    followEnd: props.followEnd,
+    onPosition: track
+      ? at => {
+          positions.push(at)
+        }
+      : undefined,
     headerHeight: HEADER,
     ready,
     tab,
@@ -162,6 +172,7 @@ async function mount(initial: Partial<HarnessProps> = {}): Promise<void> {
   installLayout()
   scrollTop = 0
   calls.length = 0
+  positions.length = 0
   props = { tab: 'videos', ready: true, anchorOnRow: false, ...initial }
   host = document.createElement('div')
   document.body.appendChild(host)
@@ -617,6 +628,222 @@ describe('the pinned head in a browser', function () {
       LAYOUT.content.height = height
       if (original != null)
         Object.defineProperty(Element.prototype, 'scrollHeight', original)
+    }
+  })
+
+  /** The page's height as a browser lays it out: the tab, its room, the tail. */
+  function layOutPage(): () => void {
+    const original = Object.getOwnPropertyDescriptor(
+      Element.prototype,
+      'scrollHeight'
+    )
+    Object.defineProperty(Element.prototype, 'scrollHeight', {
+      configurable: true,
+      get(this: HTMLElement) {
+        if (this.dataset.name !== 'scroller') return 0
+        const room = named('spacer').style.height
+        return (
+          LAYOUT.content.top +
+          LAYOUT.content.height +
+          TAIL +
+          (room === '' ? 0 : Number.parseFloat(room))
+        )
+      }
+    })
+    return () => {
+      if (original != null)
+        Object.defineProperty(Element.prototype, 'scrollHeight', original)
+      else
+        delete (Element.prototype as unknown as Record<string, unknown>)
+          .scrollHeight
+    }
+  }
+  /** A ResizeObserver the test fires by hand. */
+  function watchResizes(): { fire: () => Promise<void>; restore: () => void } {
+    const watchers: Array<() => void> = []
+    const globals = globalThis as { ResizeObserver?: unknown }
+    const before = globals.ResizeObserver
+    globals.ResizeObserver = class {
+      constructor(callback: () => void) {
+        watchers.push(callback)
+      }
+
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    }
+    return {
+      fire: async () => {
+        await act(async () => {
+          for (const watcher of watchers) watcher()
+        })
+      },
+      restore: () => {
+        globals.ResizeObserver = before
+      }
+    }
+  }
+  /** Where the page ends with no room kept: the tab and the tail, less a screen. */
+  const contentEnd = (): number =>
+    Math.max(
+      PIN_AT,
+      LAYOUT.content.top + LAYOUT.content.height + TAIL - VIEWPORT
+    )
+
+  it('reports where the page is and where its content ends on a scroll, to a screen that asks', async function () {
+    await mount({ track: true })
+    await setScroll(300)
+    expect(positions.at(-1)).deep.equals({ y: 300, end: contentEnd() })
+    await setScroll(120)
+    expect(positions.at(-1)).deep.equals({ y: 120, end: contentEnd() })
+    // A screen that does not ask is told nothing, and scrolls as before.
+    await act(async () => {
+      root?.unmount()
+    })
+    host?.remove()
+    await mount()
+    await setScroll(300)
+    expect(positions).deep.equals([])
+    expect(named('pills').style.top).equals(`${HEADER}px`)
+    expect(calls.at(-1)).equals(`scroll card=`)
+  })
+
+  it('scrolls to the end of the page, smoothly when asked', async function () {
+    const unlay = layOutPage()
+    try {
+      await mount({ track: true })
+      await act(async () => {
+        head!.scrollToEnd(false)
+      })
+      expect(named('scroller').scrollTop).equals(contentEnd())
+      expect(positions.at(-1)).deep.equals({
+        y: contentEnd(),
+        end: contentEnd()
+      })
+      expect(named('pills').style.top).equals(`${HEADER}px`)
+      await setScroll(0)
+      const smooth: ScrollToOptions[] = []
+      // A scroll view's own `scrollTo` (react-native-web's, { x, y }) is
+      // never what the head calls.
+      named('scroller').scrollTo = () => {
+        throw new Error('scrollTo')
+      }
+      named('scroller').scroll = ((options: ScrollToOptions) => {
+        smooth.push(options)
+      }) as typeof Element.prototype.scroll
+      await act(async () => {
+        head!.scrollToEnd(true)
+      })
+      expect(smooth).deep.equals([{ top: contentEnd(), behavior: 'smooth' }])
+    } finally {
+      unlay()
+    }
+  })
+
+  it('waits for a pending anchor before scrolling to the end', async function () {
+    const unlay = layOutPage()
+    try {
+      await mount({ ready: false })
+      await act(async () => {
+        head!.scrollToEnd(false)
+      })
+      expect(named('scroller').scrollTop).equals(0)
+      await rerender({ ready: true })
+      expect(named('scroller').scrollTop).equals(contentEnd())
+    } finally {
+      unlay()
+    }
+  })
+
+  it('lets go of the room kept for a page that shrank at its end, and lands on the last content', async function () {
+    const unlay = layOutPage()
+    const height = LAYOUT.content.height
+    try {
+      await mount({ track: true })
+      await setScroll(contentEnd())
+      const end = contentEnd()
+      // A line collapses: the browser pulls the page back, and the room is
+      // kept for where it was, as on every pinned screen.
+      LAYOUT.content.height -= 300
+      await setScroll(contentEnd())
+      expect(named('scroller').scrollTop).equals(end)
+      expect(named('spacer').style.height).equals('300px')
+      await act(async () => {
+        head!.scrollToEnd(false)
+      })
+      expect(named('spacer').style.height).equals('0px')
+      expect(named('scroller').scrollTop).equals(contentEnd())
+      // The browser's own scroll as the room goes finds nothing to undo.
+      await setScroll(named('scroller').scrollTop)
+      expect(named('scroller').scrollTop).equals(contentEnd())
+      expect(named('spacer').style.height).equals('0px')
+      expect(positions.at(-1)).deep.equals({
+        y: contentEnd(),
+        end: contentEnd()
+      })
+      expect(named('pills').style.top).equals(`${HEADER}px`)
+    } finally {
+      LAYOUT.content.height = height
+      unlay()
+    }
+  })
+
+  it('keeps no room below a page that follows its end as its content shrinks', async function () {
+    const unlay = layOutPage()
+    const resizes = watchResizes()
+    const height = LAYOUT.content.height
+    try {
+      await mount({ track: true, followEnd: true })
+      await act(async () => {
+        head!.scrollToEnd(false)
+      })
+      // A line collapses and the browser's pull reaches the page first.
+      LAYOUT.content.height -= 300
+      await setScroll(contentEnd())
+      expect(named('spacer').style.height).equals('0px')
+      expect(named('scroller').scrollTop).equals(contentEnd())
+      expect(positions.at(-1)).deep.equals({
+        y: contentEnd(),
+        end: contentEnd()
+      })
+      // A line removed, measured before the browser pulls the page.
+      LAYOUT.content.height -= 100
+      await resizes.fire()
+      expect(named('spacer').style.height).equals('0px')
+      expect(named('scroller').scrollTop).equals(contentEnd())
+      expect(positions.at(-1)).deep.equals({
+        y: contentEnd(),
+        end: contentEnd()
+      })
+      expect(named('pills').style.top).equals(`${HEADER}px`)
+    } finally {
+      LAYOUT.content.height = height
+      resizes.restore()
+      unlay()
+    }
+  })
+
+  it('keeps the room for where the page was when it does not follow its end', async function () {
+    const unlay = layOutPage()
+    const resizes = watchResizes()
+    const height = LAYOUT.content.height
+    try {
+      await mount({ track: true })
+      await act(async () => {
+        head!.scrollToEnd(false)
+      })
+      const end = contentEnd()
+      LAYOUT.content.height -= 100
+      await resizes.fire()
+      expect(named('spacer').style.height).equals('100px')
+      expect(named('scroller').scrollTop).equals(end)
+      // Reported against the content, not the room: the page is past it.
+      await setScroll(end)
+      expect(positions.at(-1)).deep.equals({ y: end, end: contentEnd() })
+    } finally {
+      LAYOUT.content.height = height
+      resizes.restore()
+      unlay()
     }
   })
 })

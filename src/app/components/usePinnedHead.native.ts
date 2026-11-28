@@ -40,6 +40,14 @@ export type { PinnedHead, PinnedHeadOptions }
  */
 const PROVISIONAL_ROOM = 20000
 
+/** How close to the end counts as at it, as `tailFollow`'s rule has it. */
+const AT_END = 2
+
+/** Where the last scroll left the page, as `onPosition` is told. */
+const UNPLACED = 0
+const AT_PAGE_END = 1
+const MOVED_UP = 2
+
 /** What the anchor needs to know, each from its own `onLayout`. */
 interface Measured {
   viewport?: number
@@ -101,6 +109,21 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
    */
   const takenOver = useSharedValue(false)
   const scrollRef = useAnimatedRef<Animated.ScrollView>()
+  /**
+   * The page's end with no room kept after the content, for `onPosition`:
+   * -1 until a tab has been anchored. Only read while a screen asks where
+   * the page is (`reporting`).
+   */
+  const contentEnd = useSharedValue(-1)
+  const reporting = useSharedValue(options.onPosition != null)
+  /** The class of the last scroll `onPosition` was told of, and its end. */
+  const placed = useSharedValue(UNPLACED)
+  const placedEnd = useSharedValue(-1)
+  /**
+   * `scrollToEnd` let the room go: a page pulled back to its new end is not
+   * a shrink to undo. Until a finger takes the page, or the room has gone.
+   */
+  const releasing = useSharedValue(false)
 
   /** The head as a tab was selected, until that tab has been anchored. */
   const pending = useRef<HeadState | undefined>(AT_REST)
@@ -138,6 +161,10 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
     anchorAgain.current()
     return true
   }, [holdRow])
+  /** `release`, for the callbacks written above it. */
+  const releaseRef = useRef<(animated: boolean) => void>(() => undefined)
+  /** A `scrollToEnd` asked for while a tab waited to be anchored. */
+  const endAfterAnchor = useRef<boolean | undefined>(undefined)
   /** Timers a jump leaves running; the next select, jump or unmount ends them. */
   const timers = useRef<Array<ReturnType<typeof setTimeout>>>([])
   const clearTimers = useCallback((): void => {
@@ -168,6 +195,12 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
   const notify = useCallback(() => {
     latest.current.onScroll()
   }, [])
+  const report = useCallback((at: number, end: number) => {
+    latest.current.onPosition?.({ y: at, end })
+  }, [])
+  useEffect(() => {
+    reporting.value = options.onPosition != null
+  })
 
   /**
    * The page was pulled back from `back` by `lost` because its content shrank
@@ -178,6 +211,11 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
   const restore = useCallback(
     (back: number, lost: number): void => {
       if (pending.current != null || growing.current != null) return
+      // Following its end: left at the new end, with no room under it.
+      if (latest.current.followEnd === true) {
+        releaseRef.current(false)
+        return
+      }
       const room = spaceNow.current + lost
       const jump = (): void => {
         growing.current = undefined
@@ -229,6 +267,7 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
       touched.value = true
       holdRow.value = false
       jumpTo.value = -1
+      releasing.value = false
       if (holding.value) takenOver.value = true
     },
     onEndDrag: () => {
@@ -258,8 +297,12 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
       const end = event.contentSize.height - event.layoutMeasurement.height
       const shrank = end < pageEnd.value - 1
       pageEnd.value = end
+      // The released room has gone, and the page is at its end.
+      if (releasing.value && end <= contentEnd.value + 1)
+        releasing.value = false
       if (
         shrank &&
+        !releasing.value &&
         !holding.value &&
         !dragging.value &&
         next < y.value - 1 &&
@@ -269,6 +312,7 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
         runOnJS(restore)(y.value, y.value - next)
         return
       }
+      const before = y.value
       if (holding.value) {
         y.value = next
       } else {
@@ -280,6 +324,26 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
       // told when.
       // eslint-disable-next-line @typescript-eslint/no-deprecated -- scheduleOnRN takes its arguments directly rather than returning a function, as in GameWatchLayout.native.tsx
       runOnJS(notify)()
+      // Where the page is, only as it changes class (at its end, moved up)
+      // or reaches an end that moved: a fling calls JS no more than that.
+      if (reporting.value && contentEnd.value >= 0) {
+        const last = contentEnd.value
+        const kind =
+          next >= last - AT_END
+            ? AT_PAGE_END
+            : next < before - 1
+              ? MOVED_UP
+              : placed.value
+        if (
+          kind !== placed.value ||
+          (kind === AT_PAGE_END && Math.abs(last - placedEnd.value) > 1)
+        ) {
+          placed.value = kind
+          placedEnd.value = last
+          // eslint-disable-next-line @typescript-eslint/no-deprecated -- as above
+          runOnJS(report)(next, last)
+        }
+      }
     }
   })
 
@@ -311,6 +375,11 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
     if (pending.current != null || roomAfterDrag.value) return
     if (anchor == null || viewport == null || pin == null || content == null)
       return
+    // Following its end: the page goes to the new end, with no room kept.
+    if (latest.current.followEnd === true) {
+      releaseRef.current(false)
+      return
+    }
     const { headerHeight, tail } = latest.current
     const contentBottom = headerHeight + content.y + content.height + tail
     lastAnchor.current = {
@@ -319,6 +388,7 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
       contentBottom,
       viewport
     }
+    contentEnd.value = Math.max(anchor.offset + pin, contentBottom - viewport)
     // And room for where the page is, so shrinking content cannot pull it.
     setSpace(
       Math.max(
@@ -326,7 +396,7 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
         spacerFor(y.value, contentBottom, viewport)
       )
     )
-  }, [reanchor, roomAfterDrag, y])
+  }, [contentEnd, reanchor, roomAfterDrag, y])
 
   /** The hand-off's ref, forwarded as it is now, whatever it was before. */
   const cardRef = useCallback((node: unknown): void => {
@@ -369,6 +439,7 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
         contentBottom,
         viewport
       }
+      contentEnd.value = Math.max(reach, contentBottom - viewport)
       // Held on its row until a finger takes the page, unless one already has.
       rowFrom.current = anchorOnRow && !takenOver.value ? from : undefined
       holdRow.value = rowFrom.current != null
@@ -448,6 +519,12 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
       // caught up: one already where it belongs sent no scroll to say so.
       timers.current.push(setTimeout(notify, 1050))
       notify()
+      // A `scrollToEnd` asked for while the tab waited: now it has landed.
+      const toEnd = endAfterAnchor.current
+      if (toEnd != null) {
+        endAfterAnchor.current = undefined
+        releaseRef.current(toEnd)
+      }
     }
     const room = spacerFor(reach, contentBottom, viewport)
     // Room for the jump first, then the jump. Room within a pixel of what is
@@ -468,6 +545,7 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
   }, [
     clearTimers,
     collapse,
+    contentEnd,
     dragging,
     holdRow,
     holding,
@@ -483,6 +561,104 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
 
   anchorAgain.current = tryAnchor
 
+  /**
+   * The page sent to its end with only the room the anchor needs after the
+   * content: none kept for where the page was. The end is recorded as the
+   * head's, and a page pulled back to it as the room goes is not taken for a
+   * shrink to undo.
+   */
+  const release = useCallback(
+    (animated: boolean): void => {
+      const anchor = lastAnchor.current
+      const { viewport, pinAt: pin, content } = measured.current
+      if (anchor == null || viewport == null || pin == null || content == null)
+        return
+      const { headerHeight, tail } = latest.current
+      const contentBottom = headerHeight + content.y + content.height + tail
+      const reach = anchor.offset + pin
+      lastAnchor.current = {
+        offset: anchor.offset,
+        reach,
+        contentBottom,
+        viewport
+      }
+      const end = Math.max(reach, contentBottom - viewport)
+      contentEnd.value = end
+      rowFrom.current = undefined
+      holdRow.value = false
+      growing.current = undefined
+      clearTimers()
+      // eslint-disable-next-line @typescript-eslint/no-deprecated -- as above
+      runOnUI((to: number, smooth: boolean) => {
+        'worklet'
+        releasing.value = true
+        roomAfterDrag.value = false
+        placed.value = AT_PAGE_END
+        placedEnd.value = to
+        if (smooth) {
+          // Its own scrolls carry the head on, as a finger's would.
+          jumpTo.value = -1
+        } else {
+          const head = scrolled({ y: y.value, collapse: collapse.value }, to)
+          y.value = head.y
+          collapse.value = head.collapse
+          jumpTo.value = dragging.value ? -1 : to
+        }
+        scrollTo(scrollRef, 0, to, smooth)
+      })(end, animated)
+      setSpace(spacerFor(reach, contentBottom, viewport))
+      // Sent again while the room settles, in case the first was clamped.
+      for (const delay of [50, 150, 300, 600]) {
+        timers.current.push(
+          setTimeout(() => {
+            // eslint-disable-next-line @typescript-eslint/no-deprecated -- as above
+            runOnUI(() => {
+              'worklet'
+              if (jumpTo.value >= 0) scrollTo(scrollRef, 0, jumpTo.value, false)
+            })()
+          }, delay)
+        )
+      }
+      timers.current.push(
+        setTimeout(() => {
+          // eslint-disable-next-line @typescript-eslint/no-deprecated -- as above
+          runOnUI(() => {
+            'worklet'
+            jumpTo.value = -1
+            releasing.value = false
+          })()
+        }, 900)
+      )
+      notify()
+      report(end, end)
+    },
+    [
+      clearTimers,
+      collapse,
+      contentEnd,
+      dragging,
+      holdRow,
+      jumpTo,
+      notify,
+      placed,
+      placedEnd,
+      releasing,
+      report,
+      roomAfterDrag,
+      scrollRef,
+      y
+    ]
+  )
+  releaseRef.current = release
+
+  const scrollToEnd = useCallback((animated: boolean): void => {
+    if (pending.current != null) {
+      endAfterAnchor.current = animated
+      return
+    }
+    releaseRef.current(animated)
+  }, [])
+
   // A tab selected again, already laid out, needs no new layout to anchor;
   // the first load waits here for its data.
   useLayoutEffect(() => {
@@ -493,6 +669,11 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
     (tab: string): void => {
       pending.current = { y: y.value, collapse: collapse.value }
       holding.value = true
+      endAfterAnchor.current = undefined
+      // A new tab: where its page ends is not known until it is anchored.
+      contentEnd.value = -1
+      placed.value = UNPLACED
+      releasing.value = false
       takenOver.value = false
       roomAfterDrag.value = false
       holdRow.value = false
@@ -517,7 +698,18 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
       setSpace(y.value + PROVISIONAL_ROOM)
       setGeneration(generation => generation + 1)
     },
-    [clearTimers, collapse, holdRow, holding, roomAfterDrag, takenOver, y]
+    [
+      clearTimers,
+      collapse,
+      contentEnd,
+      holdRow,
+      holding,
+      placed,
+      releasing,
+      roomAfterDrag,
+      takenOver,
+      y
+    ]
   )
 
   return useMemo(
@@ -574,7 +766,8 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
           }
         }
       },
-      select
+      select,
+      scrollToEnd
     }),
     [
       cardRef,
@@ -585,6 +778,7 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
       reanchor,
       resizeRoom,
       scrollRef,
+      scrollToEnd,
       select,
       space,
       tryAnchor

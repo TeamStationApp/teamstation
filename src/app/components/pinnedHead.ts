@@ -145,6 +145,18 @@ export interface PinnedHeadOptions {
   onScroll: () => void
   /** Another ref for the card band: the hand-off measures the same box. */
   cardRef?: React.Ref<React.ComponentRef<typeof View>>
+  /**
+   * Where the page is, for a screen that follows its end: `y` the offset and
+   * `end` the page's end without any room kept after the content. The
+   * browser calls it on every scroll; the phone only when the page goes from
+   * at its end to moved up, or back, or reaches an end that moved.
+   */
+  onPosition?: (at: { y: number; end: number }) => void
+  /**
+   * The page follows its end: content that shrinks under it keeps no room
+   * for where the page was, and the page goes to the new end instead.
+   */
+  followEnd?: boolean
 }
 
 interface Part {
@@ -177,4 +189,9 @@ export interface PinnedHead {
    * the new tab is anchored once it has been laid out.
    */
   select: (tab: string) => void
+  /**
+   * Scroll to the page's end, the room kept for where it was released first,
+   * so the end is the content's own. Waits for a pending anchor.
+   */
+  scrollToEnd: (animated: boolean) => void
 }

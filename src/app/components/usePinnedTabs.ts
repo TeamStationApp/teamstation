@@ -2,7 +2,7 @@ import { useCallback, useLayoutEffect, useRef } from 'react'
 
 import { HANDOFF_RAMP } from './handoff'
 import { useHeaderSlot } from './headerSlot'
-import type { PinnedHead } from './pinnedHead'
+import type { PinnedHead, PinnedHeadOptions } from './pinnedHead'
 import { useScreenBottom } from './Screen'
 import { useHandoff } from './useHandoff'
 import { usePinnedHead } from './usePinnedHead'
@@ -50,8 +50,12 @@ export function usePinnedTabs(options: {
   tab: string
   /** The tab anchors on `pinned.nextRow` rather than at its top. */
   anchorOnRow: boolean
+  /** Where the page is, for a screen that follows its end. */
+  onPosition?: PinnedHeadOptions['onPosition']
+  /** The page follows its end, keeping no room for where it was. */
+  followEnd?: boolean
 }): { pinned: PinnedHead; selectTab: (tab: string) => void } {
-  const { head, ready, tab, anchorOnRow } = options
+  const { head, ready, tab, anchorOnRow, onPosition, followEnd } = options
   const { headerHeight, handoff } = head
   const pinned = usePinnedHead({
     headerHeight,
@@ -62,7 +66,9 @@ export function usePinnedTabs(options: {
     // can always scroll that much further.
     tail: useScreenBottom(),
     onScroll: handoff.handleScroll,
-    cardRef: handoff.ref
+    cardRef: handoff.ref,
+    onPosition,
+    followEnd
   })
   const { select } = pinned
 
