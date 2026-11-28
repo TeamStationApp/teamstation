@@ -9,6 +9,7 @@ import {
 } from 'react-native'
 
 import type { GameDetail, TeamStationClient } from '../../common/api'
+import type { GameSocket } from '../../common/gameSocket'
 import { Button } from '../components/Button'
 import { Icon } from '../components/Icon'
 import { PersonEmblem } from '../components/PersonEmblem'
@@ -42,12 +43,15 @@ export interface PlaysTabProps {
   onSignIn: () => void
   /** The stream's layout, which changes as lines are added or opened. */
   onLayout?: (event: LayoutChangeEvent) => void
+  /** The game socket, to follow the plays as they are scored. */
+  socket?: Pick<GameSocket, 'subscribe'>
 }
 
 /**
  * A game's Plays tab: one column of its at-bats, oldest first, grouped by
  * half-inning with a summary line closing each half that has ended. Each line
- * opens into the pitches of its at-bat.
+ * opens into the pitches of its at-bat; the at-bat in progress is always
+ * open. On a game being scored the plays follow the game socket.
  *
  * A viewer who may not read the plays — signed out, or a member of neither
  * team — is shown how to become a member instead, and nothing is asked for.
@@ -60,7 +64,8 @@ export function PlaysTab(props: PlaysTabProps): React.ReactElement {
   const { read, retry } = usePlays({
     client,
     gameId: game.id,
-    enabled: mayRead
+    enabled: mayRead,
+    socket: props.socket
   })
   const photos = useRosterPhotos(
     client,
@@ -225,7 +230,12 @@ function Half(props: {
         <Line
           key={line.atBatIndex}
           line={line}
-          open={line.expandable && props.open.has(line.atBatIndex)}
+          // The at-bat in progress shows its pitches as they come; once
+          // stored it is an ordinary line, shut unless the viewer opened it.
+          open={
+            line.inProgress ||
+            (line.expandable && props.open.has(line.atBatIndex))
+          }
           face={
             line.batter.gumboId == null
               ? undefined
@@ -304,7 +314,7 @@ function Line(props: {
           </View>
         )}
       </View>
-      {line.expandable && (
+      {line.expandable && !line.inProgress && (
         <View style={open ? styles.chevronOpen : undefined}>
           <Icon
             name="chevron_right"
@@ -317,7 +327,7 @@ function Line(props: {
   )
   return (
     <View style={styles.line} testID={`plays-line-${line.atBatIndex}`}>
-      {line.expandable ? (
+      {line.expandable && !line.inProgress ? (
         <Pressable
           accessibilityRole="button"
           accessibilityState={{ expanded: open }}
@@ -331,7 +341,7 @@ function Line(props: {
       ) : (
         body
       )}
-      {open && (
+      {open && line.rows.length > 0 && (
         <View style={styles.rows} testID={`plays-rows-${line.atBatIndex}`}>
           {line.rows.map((row, index) => (
             <Row key={index} row={row} styles={styles} />
