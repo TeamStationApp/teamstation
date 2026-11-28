@@ -28,6 +28,13 @@ import { setupOf } from '../../common/scoring/state'
 import { BASES } from '../field/fieldModel'
 import { advanceReel, holdForLaterBeat } from './dictatedReel'
 import {
+  chainAnswered,
+  chainDropError,
+  chainRunner,
+  commitChain,
+  deferToChain
+} from './runnerChain'
+import {
   closePlay,
   copyGame,
   copyState,
@@ -181,6 +188,18 @@ export function settleRunners(
   if (pending != null && !pending.trajectoryAccepted) {
     state.phase = 'trajectory'
     return
+  }
+  // Runners a drag pushed answer together, and apply once all have.
+  const chain = state.runnerChain
+  if (chain != null) {
+    if (!chainAnswered(state, chain)) {
+      state.runnerAction = null
+      state.phase = state.motions.some(motion => !motion.complete)
+        ? 'runnerMovement'
+        : 'chainDecision'
+      return
+    }
+    commitChain(state)
   }
   const game = state.session
   const decision = nextDecision(game)
@@ -482,7 +501,7 @@ export function finishOut(state: ScoringState, defender: FielderRef): void {
       : action.thrower != null && action.thrower !== defender
         ? [action.thrower, defender]
         : [defender]
-  act(state, {
+  const movement: RunnerMovementAction = {
     type: 'runnerMovement',
     runner: action.playerId,
     to: destination(action.to),
@@ -498,7 +517,9 @@ export function finishOut(state: ScoringState, defender: FielderRef): void {
     ...(action.runnerPoint == null
       ? {}
       : { runnerLocation: { ...action.runnerPoint } })
-  })
+  }
+  // A runner of an open chain is out when the whole chain applies.
+  if (!deferToChain(state, 'out', movement)) act(state, movement)
   state.runnerAction = null
   state.phase = 'runnerMovement'
   settleRunners(state)
@@ -536,6 +557,9 @@ function returningAfterCatch(
 export function runnerDecisionError(state: ScoringState): string | undefined {
   const action = state.runnerAction
   if (action == null) return
+  // A base the chain empties is not refused as occupied.
+  if (chainRunner(state, action.playerId) != null)
+    return chainDropError(state, action.playerId, action.to)
   return gameRunnerError(state.session, action)
 }
 
@@ -561,7 +585,7 @@ function commitSafe(state: ScoringState): void {
   const choice =
     action.returnPhase === 'resolveBatter' ||
     action.purpose === 'droppedThirdStrike'
-  act(state, {
+  const movement: RunnerMovementAction = {
     type: 'runnerMovement',
     runner: action.playerId,
     to: destination(action.to),
@@ -576,7 +600,9 @@ function commitSafe(state: ScoringState): void {
     ...(choice || action.reason == null
       ? {}
       : { reason: action.reason as RunnerReason })
-  })
+  }
+  // A runner of an open chain is safe when the whole chain applies.
+  if (!deferToChain(state, 'safe', movement)) act(state, movement)
   state.runnerAction = null
   state.phase = 'runnerMovement'
   settleRunners(state)

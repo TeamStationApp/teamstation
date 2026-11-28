@@ -13,6 +13,7 @@ import type {
 } from '../../common/scoring/state'
 import type { GroundPoint } from '../field/fieldModel'
 import type { MoreAction, MoreInput } from './moreActions'
+import type { RunnerChain } from './runnerChain'
 import type { ContactKind, Outcome } from './scoringContract'
 import type { PresentationSequence } from './scoringPresentation'
 
@@ -58,6 +59,8 @@ export type ScoringPhase =
   | 'runnerPitch'
   | 'runnerPitchType'
   | 'correctionWindow'
+  /** The runners a drag pushed each answer Safe, Out or Back. */
+  | 'chainDecision'
 /**
  * The ball in play as the screen draws it: the outcome the scorer chose, where
  * the ball went, who fielded it and holds it now, and where the batter-runner
@@ -163,6 +166,8 @@ export interface ScoringSnapshot {
 
   activeGesture?: boolean
   runnerDraft?: ScoringDraft
+  /** Runners a drag moved together, each still to answer or applied at once. */
+  runnerChain?: RunnerChain
 
   motions: MotionCommand[]
   runnerAction: RunnerAction | null
@@ -338,6 +343,13 @@ export type ScoringEvent =
       generation: number
     }
   | { type: 'CHOICE_CANCEL'; generation: number }
+  /** A runner the chain pushed answers Safe, Out or Back. */
+  | {
+      type: 'CHAIN_DECIDE'
+      id: number
+      decision: 'safe' | 'out' | 'back'
+      generation: number
+    }
   | { type: 'RUNNER_PROPOSE'; id: number; to: number }
   | { type: 'RUNNER_DECIDE'; decision: 'safe' | 'out' }
   | {

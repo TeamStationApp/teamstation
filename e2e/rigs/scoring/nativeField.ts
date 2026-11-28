@@ -25,6 +25,14 @@ export async function nativeField(m: any): Promise<NativeField> {
   const nodes = flatten((await m.hierarchy()) as Node)
   const rect = nodes.find(node => node.type === 'Window')?.bounds
   if (rect == null) throw new Error('The field window cannot be measured')
+  return fieldProjection(rect)
+}
+
+/**
+ * The scoring field drawn in `rect` with the screen's home view: the app's
+ * window, or the web page's field canvas.
+ */
+export function fieldProjection(rect: Rect): NativeField {
   const camera = new PerspectiveCamera()
   applyFieldCamera(camera, {
     width: rect.width,

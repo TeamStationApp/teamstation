@@ -141,3 +141,30 @@ export function runnerDragView(
     ...runnerTargets(project(BASES[to % 4]), width, height, to)
   }
 }
+
+/**
+ * Where a forward drag from `from`, `progress` of the way to the next base,
+ * puts each runner it pushes: every runner on the consecutive occupied bases
+ * ahead (`bases[0]` is first), the same share of the way to his next base.
+ */
+export function chainPush(
+  from: number,
+  progress: number,
+  bases: readonly boolean[]
+): Array<{ base: number; point: GroundPoint }> {
+  const share = Math.max(0, Math.min(1, progress))
+  const pushed: Array<{ base: number; point: GroundPoint }> = []
+  if (from < 1) return pushed
+  for (let base = from + 1; base <= 3 && bases[base - 1]; base++) {
+    const start = BASES[base]
+    const next = BASES[(base + 1) % 4]
+    pushed.push({
+      base,
+      point: {
+        x: start.x + (next.x - start.x) * share,
+        z: start.z + (next.z - start.z) * share
+      }
+    })
+  }
+  return pushed
+}

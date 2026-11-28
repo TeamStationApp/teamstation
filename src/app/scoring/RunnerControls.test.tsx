@@ -710,4 +710,99 @@ describe('runner decisions', function () {
     await render(initial())
     expect(document.querySelector('[aria-label="Done"]')).equals(null)
   })
+  it('draws a Safe, Out and Back pop-up for each pushed runner at once, Back gated on the runner behind (U6)', async function () {
+    let state = initial()
+    for (const [index, base] of (
+      ['first', 'second', 'third'] as const
+    ).entries())
+      state.session.liveData.linescore.offense[base] = playerRef(
+        state.session,
+        index + 2
+      )
+    state = scoringReducer(state, { type: 'PITCH', kind: 'ball' })
+    state = scoringReducer(state, {
+      type: 'RUNNER_DROP',
+      id: 2,
+      to: 2,
+      decision: 'safe',
+      generation: state.generation
+    })
+    state = completeMotions(
+      scoringReducer(state, { type: 'RUNNER_REASON', reason: 'Steal' })
+    )
+    expect(state.phase).equals('chainDecision')
+    const width = 800
+    const height = 450
+    const camera = new PerspectiveCamera()
+    applyFieldCamera(camera, {
+      width,
+      height,
+      view: 'home',
+      zoom: 1.25,
+      tilt: (-11 * Math.PI) / 180,
+      heightOffset: 33,
+      bottomExtension: 112
+    })
+    const projection = projectBases(camera, width, height)
+    // Nothing floats before the field is measured.
+    await render(state)
+    expect(
+      document.querySelector('[aria-label^="Pushed runner decision for"]')
+    ).equals(null)
+    await render(state, null, projection)
+    const cards = Array.from(
+      document.querySelectorAll<HTMLElement>(
+        '[aria-label^="Pushed runner decision for"]'
+      )
+    )
+    expect(cards).length(2)
+    expect(cards.map(card => card.textContent)).deep.equals([
+      'SafeOutBack',
+      'SafeOutBack'
+    ])
+    for (const card of cards) {
+      expect(parseFloat(card.style.left)).gte(8)
+      expect(parseFloat(card.style.left) + parseFloat(card.style.width)).lte(
+        width - 8
+      )
+    }
+    const back = (id: number): HTMLElement =>
+      document.querySelector<HTMLElement>(`[aria-label="Back Player ${id}"]`)!
+    // The runner behind the runner pushed to 3rd was safe: no Back.
+    expect(back(3).getAttribute('aria-disabled')).equals('true')
+    expect(back(4).getAttribute('aria-disabled')).equals('true')
+    await click('Safe Player 3')
+    await click('Out Player 4')
+    expect(received).deep.equals([
+      {
+        type: 'CHAIN_DECIDE',
+        id: 3,
+        decision: 'safe',
+        generation: state.generation
+      },
+      {
+        type: 'CHAIN_DECIDE',
+        id: 4,
+        decision: 'out',
+        generation: state.generation
+      }
+    ])
+    // Once the runner behind him is out, Back is open to the lead runner.
+    state.runnerChain!.pushed[0].decision = 'out'
+    await render(state, null, projection)
+    expect(
+      document.querySelectorAll('[aria-label^="Pushed runner decision for"]')
+    ).length(1)
+    expect(back(4).getAttribute('aria-disabled')).not.equals('true')
+    received = []
+    await click('Back Player 4')
+    expect(received).deep.equals([
+      {
+        type: 'CHAIN_DECIDE',
+        id: 4,
+        decision: 'back',
+        generation: state.generation
+      }
+    ])
+  })
 })
