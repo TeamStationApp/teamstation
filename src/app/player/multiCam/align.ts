@@ -34,6 +34,18 @@
  * sound doing it, so a gap under `NUDGE_MAX_SEC` is closed by speed
  * (`nudgeRate`) and only a larger one by a seek. In Chrome tiles stay within
  * the tolerance of each other, so this rarely moves a rate there at all.
+ *
+ * **Right after a viewer's seek the nudge gives way to the join.** Every tile
+ * was just sent somewhere new, and on a Pixel each lands up to 1.9 s late —
+ * often under a second by what its handle reads while its picture is further
+ * behind. Closing that by speed takes most of ten seconds, and a seek lands it
+ * as late again, so for `LANDING_MS` after the seek a tile more than
+ * `LANDING_JOIN_SEC` out is joined instead (`landingStep`): sent ahead, held
+ * on that picture while it decodes, and started when the game reaches it,
+ * which lands on the moment on every player. Once per tile per seek; after
+ * that, and outside the window, the rule above holds. In Chrome the tiles
+ * land within the tolerance, and in WebKit under `LANDING_JOIN_SEC`, so there
+ * it rarely changes anything.
  */
 
 import { LIVE_DELAY_SEC } from '../liveDelay'
@@ -216,6 +228,79 @@ export function farSideOfHole(
 export function worthCorrecting(readyState: number, errorSec: number): boolean {
   if (readyState >= 2) return true
   return Math.abs(errorSec) >= REPLACE_SEC
+}
+
+/** How long after a viewer's seek the grid is still landing its tiles. */
+export const LANDING_MS = 10_000
+
+/** How far out a tile may be, while the grid lands, before it is joined rather than nudged. */
+export const LANDING_JOIN_SEC = 0.5
+
+/** How far past the seekable end a tile's place may be and still count. */
+export const SEEKABLE_SLACK_SEC = 0.25
+
+export type LandingStep = 'join' | 'seek' | 'nudge' | 'none'
+
+/**
+ * How one playing tile is brought onto the moment (`errorSec`, positive when
+ * behind).
+ *
+ * While landing (`sinceSeekMs` under `LANDING_MS`) and not yet joined for
+ * this seek, a tile more than `LANDING_JOIN_SEC` out joins, if it is worth
+ * correcting at all. Otherwise the steady rule: more than `NUDGE_MAX_SEC` out
+ * joins in `settle` when it is worth correcting, and is a `seek` otherwise (in
+ * `open` always — the exact seek, whose own `worthCorrecting` guard skips a
+ * starved tile); up to `NUDGE_MAX_SEC` out is nudged, and within the tolerance
+ * nothing. A starved tile (`readyState` under 2, less than `REPLACE_SEC` out)
+ * is never joined, landing or steady.
+ */
+export function landingStep(options: {
+  errorSec: number
+  /** Since the viewer's last seek; null when there has been none. */
+  sinceSeekMs: number | null
+  /** This tile has already been joined since that seek. */
+  joinedThisSeek: boolean
+  /** The alignment's mode: `open` never joins by the steady rule (it seeks). */
+  mode: 'open' | 'settle'
+  /** The element's `readyState`, for `worthCorrecting`. */
+  readyState: number
+  toleranceSec?: number
+}): LandingStep {
+  const {
+    errorSec,
+    sinceSeekMs,
+    joinedThisSeek,
+    mode,
+    readyState,
+    toleranceSec = TOLERANCE_SEC
+  } = options
+  const out = Math.abs(errorSec)
+  const worth = worthCorrecting(readyState, errorSec)
+  const landing =
+    sinceSeekMs != null && sinceSeekMs < LANDING_MS && !joinedThisSeek
+  if (landing && out > LANDING_JOIN_SEC && worth) return 'join'
+  if (out > NUDGE_MAX_SEC) return mode === 'settle' && worth ? 'join' : 'seek'
+  if (out > toleranceSec) return 'nudge'
+  return 'none'
+}
+
+/**
+ * The lead a joining tile is sent ahead by: `leadSec`, but never past the
+ * tile's seekable end less `SEEKABLE_SLACK_SEC`, and never below nought. A
+ * player told to seek past its seekable end lands at the end instead
+ * (ExoPlayer clamps), and a join held at a picture the game reaches early
+ * starts behind it.
+ */
+export function joinLeadSec(options: {
+  targetSec: number
+  leadSec: number
+  /** Where the tile's footage ends for seeking; null when the player does not say. */
+  seekableEndSec: number | null
+}): number {
+  const { targetSec, leadSec, seekableEndSec } = options
+  if (seekableEndSec == null) return leadSec
+  const room = seekableEndSec - SEEKABLE_SLACK_SEC - targetSec
+  return Math.max(0, Math.min(leadSec, room))
 }
 
 export type Correction =

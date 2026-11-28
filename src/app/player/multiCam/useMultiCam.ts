@@ -60,6 +60,7 @@ import {
   nudgeRate,
   type ParkReason,
   type Placeable,
+  SEEKABLE_SLACK_SEC,
   WATCHDOG_MS,
   worthCorrecting
 } from './align'
@@ -240,9 +241,6 @@ const JOIN_POLL_MS = 30
  * started: about what a player takes from being told to play to moving.
  */
 const START_LEAD_MS = 150
-
-/** How far past the seekable end a tile's place may be and still count. */
-const SEEKABLE_SLACK_SEC = 0.25
 
 /** How long the bar stays up after the last touch of it. */
 const BAR_HIDE_MS = CARD_HIDE_MS
