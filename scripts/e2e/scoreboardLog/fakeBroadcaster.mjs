@@ -4,7 +4,7 @@
 //   node scripts/e2e/scoreboardLog/fakeBroadcaster.mjs \
 //     --url rtmp://127.0.0.1:1946/live/<key> [--stamped] [--duration 180] \
 //     [--outage <at>:<seconds>]... [--stall <at>:<seconds>]... \
-//     [--jump <at>:<seconds>]... [--lead <seconds>] [--size 1280x720] \
+//     [--jump <at>:<seconds>]... [--lead <seconds> | --t0 <wall ms>] [--size 1280x720] \
 //     [--fps 30] [--sound] [--ffmpeg $TS_FFMPEG, else /opt/homebrew/bin/ffmpeg]
 //
 // 1. Plans the start, T0, `--lead` seconds ahead (by default long enough to
@@ -57,6 +57,9 @@ const { values } = parseArgs({
     stall: { type: 'string', multiple: true, default: [] },
     jump: { type: 'string', multiple: true, default: [] },
     lead: { type: 'string' },
+    // A T0 planned elsewhere (the stack's broadcast queue), in wall ms, in
+    // place of the lead: the encode must still be done by then.
+    t0: { type: 'string' },
     size: { type: 'string', default: '1280x720' },
     fps: { type: 'string', default: '30' },
     // A 440 Hz tone as AAC, 48 kHz stereo, as the phones and TS Director
@@ -96,7 +99,12 @@ const jumps = timed(values.jump, 'jump')
 // libx265 runs several times faster than real time at this size; a quarter
 // of the length, and ten seconds to spare, covers the encode and the stamp.
 const lead = values.lead == null ? 10 + duration / 4 : Number(values.lead)
-const t0 = Math.ceil((Date.now() + lead * 1000) / 1000) * 1000
+const t0 =
+  values.t0 == null
+    ? Math.ceil((Date.now() + lead * 1000) / 1000) * 1000
+    : Number(values.t0)
+if (!(t0 > Date.now()))
+  throw new Error(`--t0 ${values.t0} is not in the future`)
 
 const say = event => console.log(JSON.stringify({ at: Date.now(), ...event }))
 const pause = async ms =>

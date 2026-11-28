@@ -13,7 +13,9 @@ import {
   broadcasterArgs,
   BROADCASTERS,
   defaultLead,
-  encodeLead
+  encodeSeconds,
+  encodeSlots,
+  planBroadcast
 } from './broadcast'
 import { RemuxError } from './remux'
 
@@ -189,41 +191,114 @@ describe('the fake broadcaster’s command line', function () {
   })
 })
 
-describe('a broadcast’s lead', function () {
-  it('is never less than the stack needs to encode it beside the others', function () {
-    // Four encodes at once on 8 vCPUs, half as much again to spare.
-    expect(encodeLead(60, 0, 8)).equals(Math.ceil(20 + 60 * 1.1 * 1.5))
-    expect(encodeLead(60, 3, 8)).equals(encodeLead(60, 0, 8))
-    expect(encodeLead(60, 5, 8)).greaterThan(encodeLead(60, 3, 8))
-    expect(encodeLead(60, 0, 4)).greaterThan(encodeLead(60, 0, 8))
-    expect(encodeLead(60, 0, 0)).equals(encodeLead(60, 0, 1))
+describe('the encode queue’s plan', function () {
+  it('sizes its slots and estimates from the machine', function () {
+    expect(encodeSlots(8)).equals(2)
+    expect(encodeSlots(2)).equals(1)
+    expect(encodeSlots(16)).equals(4)
+    // Two encodes at once on 8 vCPUs, half as much again to spare.
+    expect(encodeSeconds(60, 8)).equals(Math.ceil(20 + 60 * 0.65 * 1.5))
+    expect(encodeSeconds(60, 4)).greaterThan(encodeSeconds(60, 8))
+    expect(encodeSeconds(60, 0)).equals(encodeSeconds(60, 1))
     expect(defaultLead(440)).equals(120)
   })
 
-  it('raises a lead too short, and keeps a longer one', async function () {
+  it('gives each broadcast the slot that frees first, and its T0 after its encode', function () {
+    const slots = [0, 0]
+    const now = 1_000_000
+    const one = planBroadcast(slots, now, 60, 0, 8)
+    const encode = encodeSeconds(60, 8) * 1000
+    expect(one.t0).equals(now + encode)
+    expect(one.lead).equals(encode / 1000)
+    const two = planBroadcast(slots, now, 60, 0, 8)
+    expect(two.t0).equals(one.t0)
+    // The third waits for the first slot to free.
+    const three = planBroadcast(slots, now, 60, 0, 8)
+    expect(three.t0).equals(now + 2 * encode)
+    expect(slots).deep.equals([now + 2 * encode, now + encode])
+    // A longer lead asked for is kept, on a whole second.
+    expect(planBroadcast([0], now + 1, 10, 900, 8).t0).equals(now + 901_000)
+  })
+})
+
+describe('the broadcast queue', function () {
+  it('starts two at once, queues the third, and starts it when a slot frees', async function () {
+    const f = fake()
+    let clock = 1_000_000
+    f.deps.now = () => clock
+    const actions = broadcastActions(f.deps)
+    const first = actions.broadcast({ url: URL, duration: 60 })
+    const second = actions.broadcast({ url: URL, duration: 60 })
+    await new Promise(resolve => setImmediate(resolve))
+    expect(f.children).has.length(2)
+    const t0 = clock + encodeSeconds(60, 8) * 1000
+    for (const child of f.children) child.print({ event: 'planned', t0 })
+    expect(((await first) as any).t0).equals(t0)
+    expect(((await second) as any).queued).equals(false)
+    const args = f.spawned[0][1]
+    expect(args[args.indexOf('--t0') + 1]).equals(String(t0))
+    expect(args).does.not.include('--lead')
+
+    const third = (await actions.broadcast({ url: URL, duration: 60 })) as any
+    expect(third.queued).equals(true)
+    expect(third.t0).equals(clock + 2 * encodeSeconds(60, 8) * 1000)
+    expect(f.children).has.length(2)
+    expect(
+      ((await actions['broadcast-status']({ id: third.id })) as any).queued
+    ).equals(true)
+
+    // The first is encoded: its slot frees, and the third starts.
+    clock += 30_000
+    f.children[0].print({ event: 'encoded' })
+    await new Promise(resolve => setImmediate(resolve))
+    expect(f.children).has.length(3)
+    const started = f.spawned[2][1]
+    expect(started[started.indexOf('--t0') + 1]).equals(String(third.t0))
+    expect(
+      ((await actions['broadcast-status']({ id: third.id })) as any).queued
+    ).equals(false)
+  })
+
+  it('takes a queued broadcast off the queue, and starts the next when one ends', async function () {
     const f = fake()
     const actions = broadcastActions(f.deps)
-    const started = actions.broadcast({ url: URL, duration: 60, lead: 5 })
-    await new Promise(resolve => setImmediate(resolve))
-    f.children[0].print({ event: 'planned', t0: 1 })
-    const first = (await started) as any
-    const floor = encodeLead(60, 0, 8)
-    expect(first.lead).equals(floor)
-    expect(f.spawned[0][1][f.spawned[0][1].indexOf('--lead') + 1]).equals(
-      String(floor)
+    const ids: string[] = []
+    for (let i = 0; i < 2; i++) {
+      const made = actions.broadcast({ url: URL, duration: 30 })
+      await new Promise(resolve => setImmediate(resolve))
+      f.children[i].print({ event: 'planned', t0: 1 })
+      ids.push(((await made) as any).id)
+    }
+    const queued = (await actions.broadcast({ url: URL, duration: 30 })) as any
+    const later = (await actions.broadcast({ url: URL, duration: 30 })) as any
+    const stopped = (await actions['broadcast-stop']({ id: queued.id })) as any
+    expect(stopped).include({ exit: 143, queued: false })
+    expect(f.children).has.length(2)
+    // An encode that fails frees its slot as well: the one after starts.
+    f.children[1].end(1)
+    await new Promise(resolve => setTimeout(resolve, 5))
+    expect(f.children).has.length(3)
+    expect(
+      ((await actions['broadcast-status']({ id: later.id })) as any).queued
+    ).equals(false)
+    expect(f.spawned.map(one => one[1][0])).deep.equals([
+      BROADCASTERS.scoreboard,
+      BROADCASTERS.scoreboard,
+      BROADCASTERS.scoreboard
+    ])
+  })
+
+  it('refuses a body it cannot follow before it plans a slot', async function () {
+    const f = fake()
+    const actions = broadcastActions(f.deps)
+    const refusal = await refused(
+      actions.broadcast({ url: 'http://x/live/k', duration: 30 })
     )
-    // The first is still encoding, so a second counts it.
-    const long = actions.broadcast({ url: URL, duration: 60, lead: 3000 })
-    await new Promise(resolve => setImmediate(resolve))
-    f.children[1].print({ event: 'planned', t0: 2 })
-    expect(((await long) as any).lead).equals(3000)
-    f.children[0].print({ event: 'encoded' })
-    f.children[1].print({ event: 'encoded' })
-    await new Promise(resolve => setImmediate(resolve))
-    const after = actions.broadcast({ url: URL, duration: 9 })
-    await new Promise(resolve => setImmediate(resolve))
-    f.children[2].print({ event: 'planned', t0: 3 })
-    expect(((await after) as any).lead).equals(encodeLead(9, 0, 8))
+    expect(refusal.status).equals(400)
+    expect(f.children).has.length(0)
+    expect(() =>
+      broadcasterArgs({ url: URL, duration: 9, t0: 1.5 }, 1936, 'ffmpeg')
+    ).throws(RemuxError, 't0 is a wall time')
   })
 })
 

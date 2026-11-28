@@ -164,7 +164,13 @@ export async function broadcast(
           started.id,
           'it ended',
           status => status.exit != null,
-          { timeoutMs: (options.duration + 900) * 1000, everyMs }
+          {
+            // From its T0, which the stack's encode queue may put far off.
+            timeoutMs:
+              Math.max(0, started.t0 - Date.now()) +
+              (options.duration + 900) * 1000,
+            everyMs
+          }
         )
       ).exit!
   }

@@ -38,9 +38,10 @@ import type { HarnessContext, StackControl } from '../../core/spec'
  *                                      camera URL's app and key, answered
  *                                      once it has planned its start
  *                                      → { id, t0, events }
- *   broadcast-status { id }            what it has printed since, and its
+ *   broadcast-status { id }            what it has printed since, whether
+ *                                      it waits for an encode slot, and its
  *                                      exit code once it has ended
- *                                      → { events, exit }
+ *                                      → { events, stderr, queued, exit }
  *   broadcast-stop   { id }            stops it → { events, exit }
  *   ingest-files { videoId }           the ingest's own disk for a live
  *                                      video, and its live settings
@@ -129,6 +130,8 @@ export interface BroadcastStatus {
   stderr?: string[]
   /** Null while it runs. */
   exit: number | null
+  /** Still waiting for one of the stack's encode slots. */
+  queued?: boolean
 }
 
 export interface Broadcast extends BroadcastStatus {
@@ -137,7 +140,7 @@ export interface Broadcast extends BroadcastStatus {
   t0: number
   /**
    * The lead it was given, in seconds: the one asked for, or more when the
-   * stack needs longer to encode it beside the broadcasts already encoding.
+   * stack's encode queue plans its T0 later.
    */
   lead?: number
 }

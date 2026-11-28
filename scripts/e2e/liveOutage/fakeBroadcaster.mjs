@@ -3,7 +3,7 @@
 //
 //   node scripts/e2e/liveOutage/fakeBroadcaster.mjs \
 //     --url rtmp://127.0.0.1:1936/live/<key> [--duration 180] \
-//     [--outage <at>:<seconds>]... [--lead <seconds>] [--size 1280x720] \
+//     [--outage <at>:<seconds>]... [--lead <seconds> | --t0 <wall ms>] [--size 1280x720] \
 //     [--fps 30] [--sound] [--ffmpeg $TS_FFMPEG, else /opt/homebrew/bin/ffmpeg]
 //
 // 1. Plans the start, T0, `--lead` seconds ahead (by default long enough to
@@ -48,6 +48,9 @@ const { values } = parseArgs({
     duration: { type: 'string', default: '180' },
     outage: { type: 'string', multiple: true, default: [] },
     lead: { type: 'string' },
+    // A T0 planned elsewhere (the stack's broadcast queue), in wall ms, in
+    // place of the lead: the encode must still be done by then.
+    t0: { type: 'string' },
     size: { type: 'string', default: '1280x720' },
     fps: { type: 'string', default: '30' },
     sound: { type: 'boolean', default: false },
@@ -73,7 +76,12 @@ for (const { at, seconds } of outages)
 // libx265 runs several times faster than real time at this size; a quarter
 // of the length, and ten seconds to spare, covers the encode.
 const lead = values.lead == null ? 10 + duration / 4 : Number(values.lead)
-const t0 = Math.ceil((Date.now() + lead * 1000) / 1000) * 1000
+const t0 =
+  values.t0 == null
+    ? Math.ceil((Date.now() + lead * 1000) / 1000) * 1000
+    : Number(values.t0)
+if (!(t0 > Date.now()))
+  throw new Error(`--t0 ${values.t0} is not in the future`)
 
 const say = event => console.log(JSON.stringify({ at: Date.now(), ...event }))
 const pause = async ms =>

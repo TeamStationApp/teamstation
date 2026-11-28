@@ -169,7 +169,8 @@ function publishOnce(kind: 'jump' | 'stall', gap: number) {
         cast.id,
         'the probe broadcast ending',
         status => status.exit != null,
-        { timeoutMs: 600_000 }
+        // From its T0, which the stack's encode queue may put far off.
+        { timeoutMs: Math.max(0, cast.t0 - Date.now()) + 600_000 }
       ).catch(async (error: unknown) => {
         const status = await pw.media.broadcastStatus(cast.id)
         if (status.exit != null) return status

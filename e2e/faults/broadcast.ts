@@ -17,19 +17,29 @@ import { RemuxError } from './remux'
  *
  *   broadcast        { url, script?, stamped?, duration, outages?, stalls?,
  *                      jumps?, lead?, size?, fps?, sound? }
- *                    runs `node <script> --url rtmp://127.0.0.1:<live port>/<app>/<key> …`
+ *                    runs `node <script> --url rtmp://127.0.0.1:<live port>/<app>/<key> --t0 …`
  *                    in the checkout, the app and key taken from the camera's
- *                    `url`, with a lead no less than `encodeLead`, and answers
- *                    once it has printed `planned` → { id, t0, lead, events, exit }
+ *                    `url`, its T0 planned by the encode queue (below)
+ *                    → { id, t0, lead, queued, events, stderr, exit }
  *   broadcast-status { id }   every event it has printed, all its
- *                             standard error, and its exit code once it has
- *                             ended → { events, stderr, exit }
- *   broadcast-stop   { id }   stops it, and answers once it has ended
+ *                             standard error, whether it still waits for an
+ *                             encode slot, and its exit code once it has
+ *                             ended → { events, stderr, queued, exit }
+ *   broadcast-stop   { id }   stops it (or takes it off the queue), and
+ *                             answers once it has ended
  *   ingest-files     { videoId }
  *                    the ingest's own live directory for the video
  *                    (`liveVideoDir`), every name in it, and its
  *                    `master.m3u8`, beside the stack's `live` settings
  *                    → { live, names, master }
+ *
+ * The encode queue. The broadcaster encodes its whole picture before T0, on
+ * the same processors as the stack's API and ingest, so at most `encodeSlots`
+ * broadcasters encode at once. A broadcast is given the slot that frees
+ * first, by the queue's own estimates (`encodeSeconds`), and a T0 once its
+ * encode is due to end, never sooner than the lead it asked for; it answers
+ * at once with that T0. Its broadcaster starts when a slot really frees (the
+ * one before it printed `encoded`, or ended), which is no later than planned.
  */
 
 /** The broadcaster's two copies: `scoreboard` stamps, stalls and jumps; `outage` writes its clock in words too. */
@@ -65,8 +75,10 @@ export interface BroadcastDeps {
   readDir: (dir: string) => Promise<string[]>
   readText: (file: string) => Promise<string>
   makeId: () => string
-  /** This machine's processors, which the least lead scales with. */
+  /** This machine's processors, which the encode slots and estimates scale with. */
   vcpus: () => number
+  /** The wall clock, in ms. */
+  now?: () => number
   /** Where the broadcaster's standard error is written as it comes. */
   log: (line: string) => void
   /** How long `broadcast` waits for `planned`. */
@@ -80,12 +92,17 @@ export interface BroadcastEvent {
 }
 
 interface Running {
-  child: BroadcastChild
+  child?: BroadcastChild
+  /** Starts its broadcaster: run once a slot is free. */
+  start: () => void
   events: BroadcastEvent[]
   exit: number | null
   /** Its standard error, which says why a broadcast failed. */
   stderr: string[]
+  /** Holding an encode slot: started, and not yet `encoded` or ended. */
+  encoding: boolean
   ended: Promise<void>
+  end: (code: number) => void
 }
 
 const ID = /^[A-Za-z0-9_-]{1,64}$/
@@ -127,23 +144,45 @@ function stretches(value: unknown, name: string): string[] {
   })
 }
 
+/** How many broadcasters encode at once on a machine of `vcpus`: two on the pool's 8. */
+export function encodeSlots(vcpus: number): number {
+  return Math.max(1, Math.round(vcpus / 4))
+}
+
 /**
- * The least lead, in seconds, a broadcast of `duration` seconds is given on a
- * stack of `vcpus` while `encoding` others are still encoding. The
- * broadcaster encodes its whole picture before its T0, and its own default
- * lead is a laptop's. On the pool's 8-vCPU droplet one 60 s picture took 25 s
- * to encode and four at once 66 s each, close to 0.2 + 0.225 s a second for
- * each encode running. A broadcast's siblings often start just after it, so
- * at least four are counted, then half as much again to spare.
+ * How long, in seconds, a broadcast of `duration` seconds takes to encode
+ * while every slot of a `vcpus` machine encodes. On the pool's 8-vCPU
+ * droplet one 60 s picture took 25 s to encode and four at once 66 s each,
+ * close to 0.2 + 0.225 s a second of picture for each encode running; then
+ * half as much again to spare, and twenty seconds to start.
  */
-export function encodeLead(
-  duration: number,
-  encoding: number,
-  vcpus: number
-): number {
-  const running = Math.max(4, encoding + 1)
-  const perSecond = (0.2 + 0.225 * running) * (8 / Math.max(1, vcpus))
+export function encodeSeconds(duration: number, vcpus: number): number {
+  const slots = encodeSlots(vcpus)
+  const perSecond = (0.2 + 0.225 * slots) * (8 / Math.max(1, vcpus))
   return Math.ceil(20 + duration * perSecond * 1.5)
+}
+
+/**
+ * Plans a broadcast on the queue: the slot that frees first (`slotFree`, each
+ * slot's planned end in wall ms, moved on to this encode's), and the T0, in
+ * wall ms on a whole second, once its encode is due to end and no sooner
+ * than `askedLead` seconds from `now`.
+ */
+export function planBroadcast(
+  slotFree: number[],
+  now: number,
+  duration: number,
+  askedLead: number,
+  vcpus: number
+): { t0: number; lead: number } {
+  let slot = 0
+  for (let i = 1; i < slotFree.length; i++)
+    if (slotFree[i] < slotFree[slot]) slot = i
+  const encoded =
+    Math.max(now, slotFree[slot]) + encodeSeconds(duration, vcpus) * 1000
+  slotFree[slot] = encoded
+  const t0 = Math.ceil(Math.max(encoded, now + askedLead * 1000) / 1000) * 1000
+  return { t0, lead: (t0 - now) / 1000 }
 }
 
 /** The broadcaster's own default lead: ten seconds and a quarter of the length. */
@@ -183,8 +222,14 @@ export function broadcasterArgs(
   for (const at of stretches(body.outages, 'outages')) args.push('--outage', at)
   for (const at of stretches(body.stalls, 'stalls')) args.push('--stall', at)
   for (const at of stretches(body.jumps, 'jumps')) args.push('--jump', at)
-  if (body.lead != null)
-    args.push('--lead', String(seconds(body.lead, 'lead', 0, 4 * MAX_SECONDS)))
+  if (body.t0 != null) {
+    if (typeof body.t0 !== 'number' || !Number.isInteger(body.t0)) {
+      bad('t0 is a wall time in whole ms')
+    }
+    args.push('--t0', String(body.t0))
+  } else if (body.lead != null) {
+    args.push('--lead', String(seconds(body.lead, 'lead', 0)))
+  }
   if (body.size != null) {
     if (typeof body.size !== 'string' || !SIZE.test(body.size)) {
       bad('size is <width>x<height>')
@@ -216,6 +261,20 @@ export function broadcastActions(
   deps: BroadcastDeps
 ): Record<string, (body: Record<string, unknown>) => Promise<unknown>> {
   const running = new Map<string, Running>()
+  const now = deps.now ?? Date.now
+  const vcpus = deps.vcpus()
+  const slots = encodeSlots(vcpus)
+  const slotFree: number[] = Array.from({ length: slots }, () => 0)
+  const queue: Running[] = []
+  /** Starts queued broadcasters while a slot is free. */
+  const next = (): void => {
+    while (
+      queue.length > 0 &&
+      [...running.values()].filter(one => one.encoding).length < slots
+    ) {
+      queue.shift()!.start()
+    }
+  }
   const livePort = (): number => {
     const port = deps.config().live?.port
     if (typeof port !== 'number') {
@@ -232,66 +291,98 @@ export function broadcastActions(
   }
   const status = (
     one: Running
-  ): { events: BroadcastEvent[]; exit: number | null; stderr: string[] } => ({
+  ): {
+    events: BroadcastEvent[]
+    exit: number | null
+    stderr: string[]
+    queued: boolean
+  } => ({
     events: [...one.events],
     exit: one.exit,
-    stderr: [...one.stderr]
+    stderr: [...one.stderr],
+    queued: one.child == null && one.exit == null
   })
 
   return {
     broadcast: async body => {
-      // The lead asked for, or the broadcaster's own, but never less than
-      // this stack needs to encode it beside what is encoding already.
       const duration = seconds(body.duration, 'duration')
-      const encoding = [...running.values()].filter(
-        one => one.exit == null && !one.events.some(e => e.event === 'encoded')
-      ).length
       const asked =
         body.lead == null
           ? defaultLead(duration)
           : seconds(body.lead, 'lead', 0)
-      const lead = Math.max(asked, encodeLead(duration, encoding, deps.vcpus()))
+      // Checked before the plan, so a body it refuses takes no slot.
+      const port = livePort()
+      const ffmpeg = deps.config().ffmpegPath ?? 'ffmpeg'
+      broadcasterArgs({ ...body, lead: undefined, t0: 0 }, port, ffmpeg)
+      const { t0, lead } = planBroadcast(
+        slotFree,
+        now(),
+        duration,
+        asked,
+        vcpus
+      )
       const args = broadcasterArgs(
-        { ...body, lead },
-        livePort(),
-        deps.config().ffmpegPath ?? 'ffmpeg'
+        { ...body, lead: undefined, t0 },
+        port,
+        ffmpeg
       )
       const id = deps.makeId()
-      const child = deps.spawn(process.execPath, args, { cwd: deps.checkout })
-      const one: Running = {
-        child,
-        events: [],
-        exit: null,
-        stderr: [],
-        ended: new Promise(resolve => {
-          child.on('exit', code => {
-            one.exit = code ?? 1
-            resolve()
-          })
-        })
-      }
-      running.set(id, one)
       let planned: (event: BroadcastEvent) => void = () => undefined
       const plannedEvent = new Promise<BroadcastEvent>(resolve => {
         planned = resolve
       })
-      const stderr = one.stderr
-      createInterface({ input: child.stderr }).on('line', line => {
-        // All of it, in the status and in the fault server's own log, which
-        // a stack's down keeps: the first line says why a broadcast failed.
-        if (stderr.length < MAX_EVENTS) stderr.push(line)
-        deps.log(`broadcast ${id}: ${line}`)
-      })
-      createInterface({ input: child.stdout }).on('line', line => {
-        let event: BroadcastEvent
-        try {
-          event = JSON.parse(line) as BroadcastEvent
-        } catch {
-          event = { at: Date.now(), event: 'output', line }
+      let resolveEnded: () => void = () => undefined
+      const one: Running = {
+        events: [],
+        exit: null,
+        stderr: [],
+        encoding: false,
+        ended: new Promise(resolve => {
+          resolveEnded = resolve
+        }),
+        end: code => {
+          if (one.exit != null) return
+          one.exit = code
+          one.encoding = false
+          resolveEnded()
+          next()
+        },
+        start: () => {
+          const child = deps.spawn(process.execPath, args, {
+            cwd: deps.checkout
+          })
+          one.child = child
+          one.encoding = true
+          child.on('exit', code => {
+            one.end(code ?? 1)
+          })
+          createInterface({ input: child.stderr }).on('line', line => {
+            // All of it, in the status and in the fault server's own log,
+            // which a stack's down keeps: the first line says why it failed.
+            if (one.stderr.length < MAX_EVENTS) one.stderr.push(line)
+            deps.log(`broadcast ${id}: ${line}`)
+          })
+          createInterface({ input: child.stdout }).on('line', line => {
+            let event: BroadcastEvent
+            try {
+              event = JSON.parse(line) as BroadcastEvent
+            } catch {
+              event = { at: now(), event: 'output', line }
+            }
+            if (one.events.length < MAX_EVENTS) one.events.push(event)
+            if (event.event === 'planned') planned(event)
+            if (event.event === 'encoded' && one.encoding) {
+              one.encoding = false
+              next()
+            }
+          })
         }
-        if (one.events.length < MAX_EVENTS) one.events.push(event)
-        if (event.event === 'planned') planned(event)
-      })
+      }
+      running.set(id, one)
+      queue.push(one)
+      next()
+      if (one.child == null) return { id, t0, lead, ...status(one) }
+      // Started at once: answer once it has planned, or say why it did not.
       let timer: ReturnType<typeof setTimeout> | undefined
       const timeout = new Promise<'timeout'>(resolve => {
         timer = setTimeout(() => {
@@ -305,15 +396,14 @@ export function broadcastActions(
       ])
       clearTimeout(timer)
       if (first === 'ended' || first === 'timeout') {
-        child.kill('SIGTERM')
+        one.child.kill('SIGTERM')
         running.delete(id)
         throw new RemuxError(
           502,
-          `the broadcaster ${first === 'ended' ? `exited ${one.exit}` : 'planned nothing in time'}: ${stderr.join(' | ').slice(0, 2000)}`
+          `the broadcaster ${first === 'ended' ? `exited ${one.exit}` : 'planned nothing in time'}: ${one.stderr.join(' | ').slice(0, 2000)}`
         )
       }
-      const t0 = Number(first.t0)
-      return { id, t0, lead, ...status(one) }
+      return { id, t0: Number(first.t0), lead, ...status(one) }
     },
 
     'broadcast-status': async body => status(find(body)),
@@ -321,7 +411,12 @@ export function broadcastActions(
     'broadcast-stop': async body => {
       const one = find(body)
       if (one.exit == null) {
-        one.child.kill('SIGTERM')
+        if (one.child == null) {
+          queue.splice(queue.indexOf(one), 1)
+          one.end(143)
+        } else {
+          one.child.kill('SIGTERM')
+        }
         await one.ended
       }
       return status(one)
