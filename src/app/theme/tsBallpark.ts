@@ -56,6 +56,8 @@ const palette = {
   // the one colour a parent glancing at a screen reads without being taught it.
   clay: '#BC4A24',
   liveRed: '#D22B2B',
+  // The Replay button on a game's hero: a green white reads on at 5.1:1.
+  replayGreen: '#2E7D32',
   gold: '#D4A017',
   amberPale: '#FDF6E3',
   amberInk: '#8A6100',
@@ -164,6 +166,7 @@ export const tsBallpark: Theme = {
   addEventCardTextColor: '#FFFFFF',
   linkTextColor: palette.blue,
   liveColor: palette.liveRed,
+  replayActionColor: palette.replayGreen,
   scheduledColor: palette.ash,
 
   // Badges: a win, a loss, and an honour such as 1st place.

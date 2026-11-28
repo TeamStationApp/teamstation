@@ -3,6 +3,10 @@ import { Pressable, Text, View } from 'react-native'
 
 import { elevationFor } from '../theme/elevation'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import {
+  HeroReplayButton,
+  type HeroReplayButtonProps
+} from './HeroReplayButton'
 import { LivePill } from './LivePill'
 import { SettingsGear } from './SettingsGear'
 import { TeamEmblem } from './TeamEmblem'
@@ -28,6 +32,12 @@ export interface GameHeroCardProps {
    * two teams.
    */
   live?: boolean
+  /**
+   * Whether a live game says so in the date's line. Off on the game's own
+   * page, where the hero's Live button (`replay`) says it instead; with it
+   * off a live game's status slot is empty. On by default (the home screen).
+   */
+  liveLabel?: boolean
   winner?: 'away' | 'home'
   /** A frame of the game's video. Absent until one has been cut. */
   posterUrl?: string | null
@@ -93,6 +103,11 @@ export interface GameHeroCardProps {
    * leaves this out: those actions belong to the game.
    */
   actions?: React.ReactNode
+  /**
+   * The game's Live / Replay button, centred on a row of its own after
+   * `actions`, as the card's last row. The home screen leaves this out.
+   */
+  replay?: HeroReplayButtonProps
 }
 
 /**
@@ -128,6 +143,7 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
     status: providedStatus,
     pendingApproval = false,
     live: providedLive = false,
+    liveLabel = true,
     winner: providedWinner,
     posterUrl,
     videoUrl,
@@ -144,7 +160,8 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
     homeLogoUrl,
     onOpenAwayTeam,
     onOpenHomeTeam,
-    actions
+    actions,
+    replay
   } = props
   const awayScore = pendingApproval ? null : providedAwayScore
   const homeScore = pendingApproval ? null : providedHomeScore
@@ -158,6 +175,16 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
     dateLines != null ||
     (date != null && date !== '') ||
     (venue != null && venue !== '')
+
+  const replayRow =
+    replay == null ? null : (
+      <View
+        testID="game-hero-replay-row"
+        style={[styles.replayRow, actions == null && styles.replayRowAlone]}
+      >
+        <HeroReplayButton {...replay} />
+      </View>
+    )
 
   const line =
     teamStats == null ||
@@ -211,7 +238,9 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
             </View>
             <View style={styles.actions}>
               {live ? (
-                <LivePill inline />
+                liveLabel ? (
+                  <LivePill inline />
+                ) : null
               ) : status !== '' ? (
                 <View style={styles.statusChip}>
                   <Text style={styles.statusChipText}>{status}</Text>
@@ -254,6 +283,7 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
         </View>
         {line}
         {actions}
+        {replayRow}
       </View>
     )
   }
@@ -283,6 +313,7 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
       )}
       {line}
       {actions}
+      {replayRow}
     </View>
   )
 }
@@ -478,6 +509,16 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontSize: theme.rem(0.75),
     letterSpacing: theme.rem(0.04),
     opacity: 0.85
+  },
+  // The Live / Replay row: the card's inset at the sides and below, and above
+  // only where no actions row already holds it off what is over it.
+  replayRow: {
+    alignItems: 'center',
+    paddingHorizontal: theme.rem(theme.cardContentInsetRem),
+    paddingBottom: theme.rem(theme.cardContentInsetRem)
+  },
+  replayRowAlone: {
+    paddingTop: theme.rem(theme.cardContentInsetRem)
   },
   actions: {
     flexDirection: 'row',

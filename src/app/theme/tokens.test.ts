@@ -28,6 +28,21 @@ function isButtonFill(token: string): boolean {
   return token.endsWith('ButtonColor')
 }
 
+function luminance(hex: string): number {
+  const [r, g, b] = [1, 3, 5].map(start => {
+    const channel = Number.parseInt(hex.slice(start, start + 2), 16) / 255
+    return channel <= 0.04045
+      ? channel / 12.92
+      : ((channel + 0.055) / 1.055) ** 2.4
+  })
+  return r * 0.2126 + g * 0.7152 + b * 0.0722
+}
+
+function contrast(a: string, b: string): number {
+  const [low, high] = [luminance(a), luminance(b)].sort((x, y) => x - y)
+  return (high + 0.05) / (low + 0.05)
+}
+
 const FOREGROUND =
   /\b(?:color|textDecorationColor|placeholderTextColor|tintColor):\s*theme\.([A-Za-z0-9_]+)/g
 
@@ -68,5 +83,13 @@ describe('theme tokens', function () {
       expect(theme.markGradientStart).match(/^#[0-9A-Fa-f]{6}$/)
       expect(theme.markGradientEnd).match(/^#[0-9A-Fa-f]{6}$/)
     }
+  })
+
+  it('reads white on the hero’s Replay green in both themes, and on the ballpark’s Live red', function () {
+    for (const theme of [tsBallpark, tsDark]) {
+      expect(theme.replayActionColor).match(/^#[0-9A-Fa-f]{6}$/)
+      expect(contrast('#FFFFFF', theme.replayActionColor)).at.least(4.5)
+    }
+    expect(contrast('#FFFFFF', tsBallpark.liveColor)).at.least(4.5)
   })
 })

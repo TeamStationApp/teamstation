@@ -128,6 +128,8 @@ export interface Theme {
   addEventCardTextColor: string
   linkTextColor: string
   liveColor: string
+  /** The Replay button on a game's hero: white on it, at least 4.5:1. */
+  replayActionColor: string
   scheduledColor: string
 
   /**

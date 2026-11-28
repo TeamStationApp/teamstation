@@ -1,5 +1,4 @@
 import type { GameDetail } from '../../common/api'
-import { isReplayable } from '../../common/replay/replayTimeline'
 import { lstrings } from '../locales/strings'
 import { scoringEntry } from '../scoring/isUnscoredGame'
 import {
@@ -8,14 +7,16 @@ import {
   gameSectionOrder
 } from './eventTabPolicy'
 
-export type GameTab =
-  'info' | 'boxScore' | 'watch' | 'replay' | 'score' | 'coach' | 'dj'
+export type GameTab = 'info' | 'boxScore' | 'watch' | 'score' | 'coach' | 'dj'
 
 export interface GameTabPill {
   id: GameTab
   label: string
-  role?: 'button'
-  live?: boolean
+}
+
+export interface HeroReplay {
+  kind: 'live' | 'replay'
+  label: string
 }
 
 export interface GameAction {
@@ -47,8 +48,6 @@ export interface GameTabsInput {
   onCoachGame?: () => void
   /** Present when this platform supports the DJ screen. */
   onDjGame?: () => void
-  /** Present where the app can open the game's replay. */
-  onReplay?: () => void
   now?: number
 }
 
@@ -59,33 +58,36 @@ const sectionLabel: Record<GameSection, string> = {
 }
 
 /**
- * The content pills across a game, left to right. Settings lives in the gear.
+ * The content pills across a game, left to right. Settings lives in the gear;
+ * Live / Replay is the hero's own button (`heroReplay`), never a section.
  */
 export function gameTabs(input: GameTabsInput): GameTabPill[] {
   const { game } = input
   const info: GameTabPill = { id: 'info', label: 'Info' }
   if (game.eventKind === 'event') return [info]
-  const pills: GameTabPill[] = gameSectionOrder(game, input.now).map(id => ({
+  return gameSectionOrder(game, input.now).map(id => ({
     id,
     label: sectionLabel[id]
   }))
-  // The game in 3D, for a member, once something TeamStation scored is
-  // stored: replayed once it is over, followed live while it is scored.
-  // It follows Videos, wherever the game's sections put Info.
-  if (input.onReplay != null && isReplayable(game, game.replayable)) {
-    const pill: GameTabPill =
-      game.status === 'inProgress'
-        ? {
-            id: 'replay',
-            label: lstrings.game_live,
-            role: 'button',
-            live: true
-          }
-        : { id: 'replay', label: lstrings.game_replay, role: 'button' }
-    const videos = pills.findIndex(item => item.id === 'watch')
-    pills.splice(videos < 0 ? pills.length : videos + 1, 0, pill)
-  }
-  return pills
+}
+
+/**
+ * The hero's Live / Replay button: the same for members, non-members and the
+ * signed out, once something TeamStation scored is stored. Followed live
+ * while it is scored, replayed once it is over. Who may open it is the game
+ * page's business (a non-member gets the membership sheet), and the replay
+ * itself still refuses a non-member (`isReplayable`).
+ */
+export function heroReplay(
+  game: Pick<GameDetail, 'status' | 'replayable'> &
+    Pick<EventTabState, 'eventKind'>
+): HeroReplay | null {
+  if (game.eventKind === 'event' || !game.replayable) return null
+  if (game.status === 'inProgress')
+    return { kind: 'live', label: lstrings.game_live }
+  if (game.status === 'final')
+    return { kind: 'replay', label: lstrings.game_replay }
+  return null
 }
 
 /**

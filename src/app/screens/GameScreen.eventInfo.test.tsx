@@ -277,7 +277,19 @@ describe('the event page’s automatic and explicit sections', () => {
       })
     expect([dj, coach, record]).deep.equals([1, 1, 1])
   })
-  it('updates the game LIVE pill for scoring, undo and finalization through the socket', async () => {
+  // The game page's hero draws no inline live label (its Live button says so,
+  // `GameScreen.replayButton.test.tsx`); the server's flag still empties the
+  // status slot, through the socket and on a notice.
+  const heroLive = (): boolean => {
+    const hero = document.querySelector('[data-testid="event-hero"]')!
+    return hero.querySelector('[aria-label="Live now"]') != null
+  }
+  const heroSays = (words: string): boolean =>
+    (
+      document.querySelector('[data-testid="event-hero"]')!.textContent ?? ''
+    ).includes(words)
+
+  it('follows the game’s live flag for scoring, undo and finalization through the socket, with no inline live label', async () => {
     const { client, game } = fixture()
     game.startAt = new Date(Date.now() - 60000).toISOString()
     game.endAt = new Date(Date.now() + 60000).toISOString()
@@ -293,36 +305,37 @@ describe('the event page’s automatic and explicit sections', () => {
         }
       }
     })
-    const visible = (): boolean =>
-      document.querySelector('[aria-label="Live now"]') != null
-    expect(visible()).equals(false)
+    expect(heroSays('IN PROGRESS')).equals(true)
     for (const hasScoringEvents of [true, false, true]) {
       await act(async () => {
         game.hasScoringEvents = hasScoringEvents
         game.isGameLive = hasScoringEvents
         listener!({ type: 'resync', gameId: 'g1' })
       })
-      expect(visible()).equals(hasScoringEvents)
+      expect(heroSays('IN PROGRESS')).equals(!hasScoringEvents)
+      expect(heroSays('LIVE')).equals(false)
+      expect(heroLive()).equals(false)
     }
     await act(async () => {
       game.status = 'final'
       game.isGameLive = false
       listener!({ type: 'resync', gameId: 'g1' })
     })
-    expect(visible()).equals(false)
+    expect(heroLive()).equals(false)
   })
 
   it('uses the backend LIVE flag and refreshes its decision on its notice', async () => {
     const { client, game } = fixture()
     // Deliberately inconsistent local dates/scoring: the UI must trust the flag.
+    game.status = 'inProgress'
     game.isGameLive = true
     await render({ client, gameId: 'g1' })
-    const visible = (): boolean =>
-      document.querySelector('[aria-label="Live now"]') != null
-    expect(visible()).equals(true)
+    expect(heroLive()).equals(false)
+    expect(heroSays('IN PROGRESS')).equals(false)
     game.isGameLive = false
     await notices.notify()
-    expect(visible()).equals(false)
+    expect(heroLive()).equals(false)
+    expect(heroSays('IN PROGRESS')).equals(true)
   })
 
   it('catches a start crossed during the game request while its end is still future', async () => {

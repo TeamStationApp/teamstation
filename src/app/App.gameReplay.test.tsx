@@ -124,13 +124,22 @@ describe('the app’s game replay', function () {
     expect(window.location.pathname).equals(`/games/${REPLAY_GAME_ID}`)
   })
 
-  it('opens from the game’s Replay pill', async function () {
+  it('opens from the game hero’s Replay button', async function () {
     window.history.replaceState(null, '', `/games/${REPLAY_GAME_ID}`)
     await act(async () => {
       root.render(<App />)
     })
     await settle()
-    await press('Replay')
+    const button = document.querySelector<HTMLElement>(
+      '[data-testid="event-hero"] [data-testid="game-hero-replay"]'
+    )
+    expect(button?.textContent).equals('Replay')
+    expect(
+      document.querySelector('[aria-label="Game sections"]')?.textContent
+    ).not.includes('Replay')
+    await act(async () => {
+      button!.click()
+    })
     await settle()
     expect(replayShown()).equals(true)
     expect(window.location.pathname).equals(`/games/${REPLAY_GAME_ID}/replay`)

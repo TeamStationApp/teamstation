@@ -32,12 +32,25 @@ import { stepHalfEnds } from './replayGaps'
  * The replay in Chromium at a phone's size, against a server and web build
  * with the replay seed loaded (`src/server/dev/replaySeed.ts`).
  *
- *   REPLAY_SCENARIO=pills REPLAY_PHASE=before|after [REPLAY_PILLS=final,live]
- *     The pills under the final and the in-progress game's hero card.
- *     `before` expects no Replay or Live pill; `after` expects them.
+ *   REPLAY_SCENARIO=heroButton REPLAY_PHASE=before|after
+ *     The Live / Replay button at the bottom of a game's hero card, for the
+ *     league account, the outsider and the signed out. `after`: no button
+ *     for the scheduled game; a pulsing red "Live" for the game in progress
+ *     and a green "Replay" for the final game, centred, the card's last row,
+ *     as tall as a section pill, with no inline live label, each opening its
+ *     replay; the home hero, the live game, keeping its inline label and no
+ *     button; the outsider's and the signed-out tap opening the membership
+ *     sheet ("…to watch this game live or its replay."), never the replay;
+ *     the replay's address refused by link (the outsider sees the game, the
+ *     signed out the sign-in). `before` (the base
+ *     build): Live / Replay in "Game sections" for the league account and
+ *     neither for the outsider or the signed out. Writes game-notStarted-,
+ *     game-live-, game-final-, membership-outsider- and
+ *     membership-signedOut-<phase>.png; `after` also home-hero-after.png,
+ *     game-live-pulse-after.mp4 and hero-button-e2e.log.
  *
  *   REPLAY_SCENARIO=replay [REPLAY_PITCH_MS=5000]
- *     The final game's replay from its pill: the controls, the pitch pacing
+ *     The final game's replay from its hero's Replay button: the controls, the pitch pacing
  *     (each pitch held for the node's pitch delay, REPLAY_PITCH_MS),
  *     the first home run, pause and play, the box score's pitchers, the X,
  *     the imported game's own replay, and the wide layout.
@@ -51,10 +64,10 @@ import { stepHalfEnds } from './replayGaps'
  *     in, announcer-scroll.mp4.
  *
  *   REPLAY_SCENARIO=live
- *     A season member follows the game in progress from its Live pill while
+ *     A season member follows the game in progress from its hero's Live while
  *     the scorer, in a second browser, throws pitches, hits a double and
  *     corrects it to a single, scores through the viewer's pause and through
- *     30 s offline, then ends the game. Writes game-pills-live-after.png,
+ *     30 s offline, then ends the game. Writes game-hero-live-follow-after.png,
  *     live-follow-web.mp4 and live-follow.log.
  *
  *   REPLAY_SCENARIO=liveAnnouncer   (the server's `speech` set)
@@ -141,14 +154,16 @@ import { stepHalfEnds } from './replayGaps'
  *     pause pauses the crowd and the cheers
  *     still sounding, which play plays on. Writes crowd-web.log.
  *
- * The seed's game ids are fixed; REPLAY_FINAL, REPLAY_LIVE and
- * REPLAY_IMPORTED override them.
+ * The seed's game ids are fixed; REPLAY_FINAL, REPLAY_LIVE, REPLAY_IMPORTED
+ * and REPLAY_SCHEDULED override them.
  */
 
 const FINAL = process.env.REPLAY_FINAL ?? 'gam_replaySeedFinal'
 const LIVE = process.env.REPLAY_LIVE ?? 'gam_replaySeedLive'
 const IMPORTED = process.env.REPLAY_IMPORTED ?? 'gam_replaySeedImported'
+const SCHEDULED = process.env.REPLAY_SCHEDULED ?? 'gam_replaySeedScheduled'
 const LEAGUE = 'replay-league@example.test'
+const OUTSIDER = 'replay-outsider@example.test'
 
 const wait = async (ms: number): Promise<void> => {
   await new Promise(resolve => setTimeout(resolve, ms))
@@ -329,25 +344,346 @@ async function pillLabels(m: Device): Promise<string[]> {
   return match == null ? [] : (JSON.parse(match[0]) as string[])
 }
 
-async function pills(m: Device): Promise<void> {
+/** Asserts the game's section pills hold neither Live nor Replay. */
+async function noReplayPill(m: Device, what: string): Promise<string[]> {
+  const labels = await pillLabels(m)
+  assert.ok(labels.length >= 1, `${what}: no pills read`)
+  for (const label of ['Live', 'Replay'])
+    assert.ok(!labels.includes(label), `${what}: pills ${labels.join(', ')}`)
+  return labels
+}
+
+/** Opens the replay from the game hero's Live / Replay button. */
+async function tapHeroReplay(m: Device, label: string): Promise<void> {
+  await noReplayPill(m, label)
+  const read = await heroButton(m)
+  assert.ok(read != null, `no ${label} button on the hero`)
+  assert.equal(read.label, label)
+  await m.tapOn({ id: 'game-hero-replay' })
+}
+
+interface Box {
+  top: number
+  bottom: number
+  left: number
+  right: number
+  height: number
+  width: number
+}
+
+interface HeroRead {
+  label: string
+  background: string
+  color: string
+  opacity: string
+  face: Box
+  card: Box
+  actions: Box | null
+  pill: Box | null
+  inHero: boolean
+  lastRow: boolean
+  liveNow: boolean
+}
+
+/**
+ * The hero's Live / Replay button as the page draws it: its label, fill and
+ * label colour, the pill face's rectangle beside the card's, the actions
+ * row's and a compact "Game sections" pill's. Null with no button.
+ */
+async function heroButton(m: Device): Promise<HeroRead | null> {
+  return await evalJson<HeroRead | null>(
+    m,
+    `
+      const box = node => {
+        if (!node) return null;
+        const r = node.getBoundingClientRect();
+        return { top: r.top, bottom: r.bottom, left: r.left, right: r.right, height: r.height, width: r.width };
+      };
+      const button = document.querySelector('[data-testid="game-hero-replay"]');
+      if (!button) return null;
+      const face = button.querySelector('[data-testid="settings-pill-tab"]');
+      const label = [...face.querySelectorAll('*')].find(node => node.children.length === 0 && node.textContent.trim() !== '');
+      const card = document.querySelector('[data-testid="event-hero"]');
+      const row = document.querySelector('[data-testid="game-hero-replay-row"]');
+      return {
+        label: button.textContent.trim(),
+        background: getComputedStyle(face).backgroundColor,
+        color: getComputedStyle(label).color,
+        opacity: getComputedStyle(button.parentElement).opacity,
+        face: box(face),
+        card: box(card),
+        actions: box(card && card.querySelector('[data-testid="game-hero-actions"]')),
+        pill: box(document.querySelector('[aria-label="Game sections"] [data-testid="settings-pill-tab"]')),
+        inHero: card != null && card.contains(button),
+        lastRow: card != null && row != null && card.lastElementChild === row,
+        liveNow: card != null && card.querySelector('[aria-label="Live now"]') != null
+      };
+    `
+  )
+}
+
+/** The button's opacity every 100 ms for two seconds, read in the page. */
+async function opacitySamples(m: Device): Promise<number[]> {
+  const result = (await m.evalBrowserScript({
+    script: `
+      return JSON.stringify(await new Promise(resolve => {
+        const samples = [];
+        const read = () => Number(getComputedStyle(document.querySelector('[data-testid="game-hero-replay"]').parentElement).opacity);
+        const timer = setInterval(() => {
+          samples.push(read());
+          if (samples.length >= 20) { clearInterval(timer); resolve(samples); }
+        }, 100);
+      }));
+    `
+  })) as { data?: unknown }
+  assert.equal(typeof result.data, 'string', 'no opacity samples')
+  return JSON.parse(result.data as string) as number[]
+}
+
+/** Signs the page out: the session cookie goes. */
+async function signOutWeb(m: Device): Promise<void> {
+  await m.openBrowser({ url: required('REPLAY_WEB_URL') })
+  await m.evalBrowserScript({
+    script: `document.cookie = 'ts_session=; path=/; max-age=0; SameSite=Lax'`
+  })
+}
+
+async function pathname(m: Device): Promise<string> {
+  return await evalJson<string>(m, 'return location.pathname')
+}
+
+async function heroButtonScenario(m: Device): Promise<void> {
   const phase = required('REPLAY_PHASE')
-  const wanted = (process.env.REPLAY_PILLS ?? 'final,live').split(',')
-  await signInWeb(m, LEAGUE)
-  for (const [name, gameId, label] of [
-    ['final', FINAL, 'Replay'],
-    ['live', LIVE, 'Live']
-  ] as const) {
-    if (!wanted.includes(name)) continue
-    await openGame(m, gameId)
-    const labels = await pillLabels(m)
-    console.log(`${name} pills: ${labels.join(', ')}`)
-    assert.ok(labels.length >= 2, `${name}: no pills read`)
-    if (phase === 'after')
-      assert.ok(labels.includes(label), `${name}: pills ${labels.join(', ')}`)
-    else
-      assert.ok(!labels.includes(label), `${name}: pills ${labels.join(', ')}`)
-    await shot(m, `game-pills-${name}-${phase}`)
+  const after = phase === 'after'
+  const log: string[] = [
+    `$ REPLAY_SCENARIO=heroButton REPLAY_PHASE=${phase} node -r sucrase/register src/app/replay/replay.e2e.ts`
+  ]
+  const note = (line: string): void => {
+    log.push(line)
+    console.log(line)
   }
+  const describe = (what: string, read: HeroRead | null): void => {
+    note(
+      read == null
+        ? `${what}: no game-hero-replay`
+        : `${what}: label ${read.label}, background ${read.background}, label colour ${read.color}, face ${JSON.stringify(read.face)}, card ${JSON.stringify(read.card)}, actions ${JSON.stringify(read.actions)}, section pill ${JSON.stringify(read.pill)}, last row ${read.lastRow}, inline live label ${read.liveNow}`
+    )
+  }
+  /** Centred in the card, its last row, a section pill's height. */
+  const placed = (what: string, read: HeroRead): void => {
+    assert.ok(read.inHero, `${what}: not in the hero`)
+    assert.ok(read.lastRow, `${what}: not the hero's last row`)
+    const centre = (read.face.left + read.face.right) / 2
+    const cardCentre = (read.card.left + read.card.right) / 2
+    assert.ok(
+      Math.abs(centre - cardCentre) <= 2,
+      `${what}: centre ${centre} against the card's ${cardCentre}`
+    )
+    assert.ok(read.face.bottom <= read.card.bottom, `${what}: below the card`)
+    if (read.actions != null)
+      assert.ok(
+        read.face.top >= read.actions.bottom,
+        `${what}: above the actions`
+      )
+    assert.ok(read.pill != null, `${what}: no section pill to compare`)
+    assert.ok(
+      Math.abs(read.face.height - read.pill.height) <= 0.5,
+      `${what}: height ${read.face.height} against a pill's ${read.pill.height}`
+    )
+    assert.equal(read.color, 'rgb(255, 255, 255)', `${what}: label colour`)
+    assert.ok(!read.liveNow, `${what}: an inline live label on the hero`)
+  }
+  /** What the base build draws: Live / Replay as a section pill, or none. */
+  const before = async (what: string, pill: string | null): Promise<void> => {
+    const labels = await pillLabels(m)
+    note(`${what}: pills ${labels.join(', ')}`)
+    assert.equal(await heroButton(m), null, `${what}: a hero button`)
+    for (const label of ['Live', 'Replay'])
+      assert.equal(
+        labels.includes(label),
+        label === pill,
+        `${what}: pills ${labels.join(', ')}`
+      )
+  }
+  const sheet = async (offer: string): Promise<void> => {
+    await m.assertVisible({
+      text: 'You need to be a member of one of the teams to watch this game live or its replay.',
+      timeout: 10000
+    })
+    await m.assertVisible({ text: offer, timeout: 10000 })
+    await m.assertNotVisible({ id: 'game-replay' })
+    // The sheet slides up over a fading scrim: shot once it has settled.
+    await wait(1500)
+  }
+
+  await signInWeb(m, LEAGUE)
+
+  // 1. The game that has not started.
+  await openGame(m, SCHEDULED)
+  if (after) {
+    const read = await heroButton(m)
+    describe('scheduled', read)
+    assert.equal(read, null, 'a button on the scheduled game')
+    note(`scheduled: pills ${(await noReplayPill(m, 'scheduled')).join(', ')}`)
+  } else await before('scheduled', null)
+  await shot(m, `game-notStarted-${phase}`)
+
+  // 2. The game in progress.
+  await openGame(m, LIVE)
+  if (after) {
+    await m.assertVisible({ id: 'game-hero-replay', timeout: 10000 })
+    const read = await heroButton(m)
+    describe('live', read)
+    assert.ok(read != null, 'no button on the live game')
+    assert.equal(read.label, 'Live')
+    assert.equal(read.background, 'rgb(210, 43, 43)', 'live: liveColor')
+    placed('live', read)
+    note(`live: pills ${(await noReplayPill(m, 'live')).join(', ')}`)
+    await shot(m, `game-live-${phase}`)
+    const out = await artifactsDir()
+    await m.startRecording({ path: 'game-live-pulse-after.mp4' })
+    const samples = await opacitySamples(m)
+    await wait(3000)
+    const stopped = (await m.stopRecording()) as { data?: unknown }
+    note(`live: opacity every 100 ms: ${samples.join(', ')}`)
+    assert.ok(
+      samples.some(value => value < 0.8),
+      'live: the button never dimmed'
+    )
+    assert.ok(
+      samples.some(value => value === 1) || samples.some(value => value > 0.99),
+      'live: the button never came back to 1'
+    )
+    const data = stopped.data as { path?: string } | string | undefined
+    const recorded = typeof data === 'string' ? data : data?.path
+    assert.ok(recorded != null, `no recording: ${JSON.stringify(stopped)}`)
+    const bytes = await (
+      m as unknown as { artifact: (file: string) => Promise<Uint8Array> }
+    ).artifact(recorded)
+    await writeFile(join(out, 'game-live-pulse-after.mp4'), bytes)
+    note(`live: recorded ${recorded} -> game-live-pulse-after.mp4`)
+    await m.tapOn({ id: 'game-hero-replay' })
+    await m.assertVisible({ id: 'game-replay', timeout: 20000 })
+    assert.equal(await pathname(m), `/games/${LIVE}/replay`)
+    note(`live: tap opened ${await pathname(m)}`)
+  } else {
+    await before('live', 'Live')
+    await shot(m, `game-live-${phase}`)
+  }
+
+  // 3. The final game.
+  await openGame(m, FINAL)
+  if (after) {
+    await m.assertVisible({ id: 'game-hero-replay', timeout: 10000 })
+    const read = await heroButton(m)
+    describe('final', read)
+    assert.ok(read != null, 'no button on the final game')
+    assert.equal(read.label, 'Replay')
+    assert.equal(
+      read.background,
+      'rgb(46, 125, 50)',
+      'final: replayActionColor'
+    )
+    placed('final', read)
+    note(`final: pills ${(await noReplayPill(m, 'final')).join(', ')}`)
+    await shot(m, `game-final-${phase}`)
+    await m.tapOn({ id: 'game-hero-replay' })
+    await m.assertVisible({ id: 'game-replay', timeout: 20000 })
+    assert.equal(await pathname(m), `/games/${FINAL}/replay`)
+    note(`final: tap opened ${await pathname(m)}`)
+  } else {
+    await before('final', 'Replay')
+    await shot(m, `game-final-${phase}`)
+  }
+
+  // 4. Home: the newest played game, the live one, as before.
+  if (after) {
+    await m.openBrowser({ url: `${required('REPLAY_WEB_URL')}/` })
+    await m.assertVisible({ text: 'Live now', timeout: 20000 })
+    const home = await evalJson<{ liveNow: boolean; button: boolean }>(
+      m,
+      `
+        return {
+          liveNow: document.querySelector('[aria-label="Live now"]') != null,
+          button: document.querySelector('[data-testid="game-hero-replay"]') != null
+        };
+      `
+    )
+    // The game the home hero stands for: the newest played game, as the
+    // home screen asks for it (recentGame).
+    const recent = (await (
+      await fetch(`${required('REPLAY_API')}/events?played=1&limit=1`, {
+        headers: { authorization: `Bearer ${await sessionFor(LEAGUE)}` }
+      })
+    ).json()) as unknown
+    const recentId = /"id":"(gam_[^"]+)"/.exec(JSON.stringify(recent))?.[1]
+    note(`home: hero game ${recentId}, ${JSON.stringify(home)}`)
+    assert.equal(recentId, LIVE, 'home: the hero is not the live game')
+    assert.ok(home.liveNow, 'home: no inline live label')
+    assert.ok(!home.button, 'home: a Live / Replay button')
+    await shot(m, `home-hero-${phase}`)
+  }
+
+  // 5. The outsider, signed in to no team of the game's.
+  await signOutWeb(m)
+  await signInWeb(m, OUTSIDER)
+  await openGame(m, FINAL)
+  if (after) {
+    const read = await heroButton(m)
+    describe('outsider final', read)
+    assert.ok(read != null, 'outsider: no button')
+    assert.equal(read.label, 'Replay')
+    await m.tapOn({ id: 'game-hero-replay' })
+    await sheet('Request membership')
+    assert.equal(await pathname(m), `/games/${FINAL}`)
+    note('outsider: the replay sheet, offering Request membership')
+    await shot(m, `membership-outsider-${phase}`)
+    // The replay's address by link: refused for a non-member, the game shows.
+    await m.openBrowser({
+      url: `${required('REPLAY_WEB_URL')}/games/${FINAL}/replay`
+    })
+    await m.assertVisible({ text: 'Box score', timeout: 20000 })
+    await m.assertNotVisible({ id: 'game-replay' })
+    assert.equal(await pathname(m), `/games/${FINAL}`)
+    note(`outsider: /games/${FINAL}/replay refused, ${await pathname(m)}`)
+  } else {
+    await before('outsider final', null)
+    await shot(m, `membership-outsider-${phase}`)
+  }
+
+  // 6. Signed out, the game in progress.
+  await signOutWeb(m)
+  await openGame(m, LIVE)
+  if (after) {
+    const read = await heroButton(m)
+    describe('signed out live', read)
+    assert.ok(read != null, 'signed out: no button')
+    assert.equal(read.label, 'Live')
+    await m.tapOn({ id: 'game-hero-replay' })
+    await sheet('Log in / Sign up')
+    assert.equal(await pathname(m), `/games/${LIVE}`)
+    note('signed out: the replay sheet, offering Log in / Sign up')
+    await shot(m, `membership-signedOut-${phase}`)
+
+    // 7. The replay's address, signed out: refused, it asks for a sign-in.
+    await m.openBrowser({
+      url: `${required('REPLAY_WEB_URL')}/games/${FINAL}/replay`
+    })
+    await m.assertVisible({ text: 'Sign in to TeamStation', timeout: 20000 })
+    await m.assertNotVisible({ id: 'game-replay' })
+    note(
+      `signed out: /games/${FINAL}/replay refused, sign-in shown at ${await pathname(m)}`
+    )
+  } else {
+    await before('signed out live', null)
+    await shot(m, `membership-signedOut-${phase}`)
+  }
+
+  const out = await artifactsDir()
+  await writeFile(
+    join(out, `hero-button-e2e${after ? '' : '-before'}.log`),
+    `${log.join('\n')}\n`
+  )
 }
 
 /** Waits until `ready` holds for the card's text, and returns it. */
@@ -392,8 +728,7 @@ async function finalSteps(): Promise<{
 async function replay(m: Device): Promise<void> {
   await signInWeb(m, LEAGUE)
   await openGame(m, FINAL)
-  assert.ok((await pillLabels(m)).includes('Replay'), 'no Replay pill')
-  await m.tapOn({ text: 'Replay' })
+  await tapHeroReplay(m, 'Replay')
   await m.assertVisible({ id: 'game-replay', timeout: 20000 })
   // Read before anything else: "Play ball!" shows for two seconds.
   const opening = (await firstCard(m)).card
@@ -553,10 +888,11 @@ async function replay(m: Device): Promise<void> {
   const path = await evalJson<string>(m, 'return location.pathname')
   assert.equal(path, `/games/${FINAL}`)
 
-  // An imported game is given its records: its pill opens its replay, which
-  // steps through its pitches as the scored game's does.
+  // An imported game is given its records: its hero's Replay opens its
+  // replay, which steps through its pitches as the scored game's does.
   await openGame(m, IMPORTED)
-  assert.ok((await pillLabels(m)).includes('Replay'), 'imported has no Replay')
+  await noReplayPill(m, 'imported')
+  assert.equal((await heroButton(m))?.label, 'Replay', 'imported: no Replay')
   await m.openBrowser({
     url: `${required('REPLAY_WEB_URL')}/games/${IMPORTED}/replay`
   })
@@ -1354,10 +1690,8 @@ async function live(daemon: Parameters<typeof attachWeb>[0]): Promise<void> {
 
     await signInWeb(viewer, SEASON)
     await openGame(viewer, LIVE)
-    const labels = await pillLabels(viewer)
-    assert.ok(labels.includes('Live'), `pills ${labels.join(', ')}`)
-    await shot(viewer, 'game-pills-live-after')
-    await viewer.tapOn({ text: 'Live' })
+    await shot(viewer, 'game-hero-live-follow-after')
+    await tapHeroReplay(viewer, 'Live')
     await viewer.assertVisible({ id: 'game-replay', timeout: 20000 })
     recorder = screenRecorder(viewer)
     await evalJson<boolean>(viewer, CARD_LOG)
@@ -2156,11 +2490,11 @@ async function rewind(daemon: Parameters<typeof attachWeb>[0]): Promise<void> {
     let words: Card | undefined
     for (let attempt = 1; words == null; attempt++) {
       assert.ok(attempt <= 4, 'R4: no tap came while the card said Play ball!')
-      // From the game page's pill, as a reader comes to it: the replay starts
-      // as it mounts, where a load of its own address spends the moment on
-      // loading the app.
+      // From the game hero's Replay, as a reader comes to it: the replay
+      // starts as it mounts, where a load of its own address spends the
+      // moment on loading the app.
       await openGame(m, FINAL)
-      await m.tapOn({ text: 'Replay' })
+      await m.tapOn({ id: 'game-hero-replay' })
       await m.assertVisible({ id: 'game-replay', timeout: 20000 })
       await evalJson<boolean>(m, CARD_LOG)
       // Pressed from the page as the card first says "Play ball!": its two
@@ -2813,7 +3147,8 @@ async function main(): Promise<void> {
   const daemon = await connect()
   let m: Device | undefined
   try {
-    if (scenario === 'pills') await pills((m = await attachWeb(daemon)))
+    if (scenario === 'heroButton')
+      await heroButtonScenario((m = await attachWeb(daemon)))
     else if (scenario === 'replay') {
       await replay((m = await attachWeb(daemon)))
       await m.detach()
