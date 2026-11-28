@@ -72,9 +72,14 @@ static UIColor *TSColorFromHex(NSString *hex)
 
 - (void)layoutSubviews
 {
+  BOOL wasEmpty = CGRectIsEmpty(_effectView.frame);
   [super layoutSubviews];
   _effectView.frame = self.bounds;
   [self applyShape];
+  // iOS 26's glass, set on a view with no size, never draws once the view has
+  // one. A pane that starts empty — a tab pill before its tabs are measured —
+  // gets its effect again the first time it is given a size.
+  if (wasEmpty && !CGRectIsEmpty(self.bounds)) [self applyEffect];
 }
 
 /**

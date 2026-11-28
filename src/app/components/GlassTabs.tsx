@@ -10,8 +10,7 @@ import {
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
-  withSpring,
-  withTiming
+  withSpring
 } from 'react-native-reanimated'
 
 import { pillPadding } from '../theme/pill'
@@ -63,20 +62,37 @@ export function GlassTabs<Id extends string = string>(
   const left = useSharedValue(0)
   const right = useSharedValue(0)
   const lift = useSharedValue(1)
-  const shown = useSharedValue(0)
   const placed = React.useRef(false)
   const lastX = React.useRef(0)
 
+  const tabKey = tabs.map(tab => tab.id).join('\n')
   const frame = frames[selected]
   React.useEffect(() => {
     if (frame == null) return
     const pad = pillPadding(theme.rem(PILL_HEIGHT_REM))
     const nextLeft = frame.x + TARGET_SIDE(theme) - pad
     const nextRight = frame.x + frame.width - TARGET_SIDE(theme) + pad
+    const recent = lastPill.get(tabKey)
+    // Another strip with these tabs is still showing (sliding out), or went
+    // a moment ago.
+    const fresh =
+      recent != null &&
+      ((live.get(tabKey) ?? 0) > 1 || Date.now() - recent.at < HANDOVER_MS)
+    const handedOver = !placed.current && fresh && recent.x !== frame.x
+    if (handedOver) {
+      // A strip with these tabs was showing a moment ago and this one
+      // replaced it (an event's Videos is a layout of its own): the pill
+      // starts where that one left it and travels here.
+      left.value = recent.left
+      right.value = recent.right
+      lastX.current = recent.x
+      placed.current = true
+    }
+    // Placed, not faded in: it starts with no width, and iOS's glass made
+    // under a transparent parent never draws.
     if (!placed.current) {
       left.value = nextLeft
       right.value = nextRight
-      shown.value = withTiming(1, { duration: 150 })
       placed.current = true
     } else {
       const forward = frame.x > lastX.current
@@ -86,6 +102,12 @@ export function GlassTabs<Id extends string = string>(
       right.value = withSpring(nextRight, forward ? fast : slow)
     }
     lastX.current = frame.x
+    lastPill.set(tabKey, {
+      left: nextLeft,
+      right: nextRight,
+      x: frame.x,
+      at: Date.now()
+    })
     // Keep the selected tab whole on screen, centred when the strip scrolls.
     if (stripWidth > 0) {
       scroll.current?.scrollTo({
@@ -95,10 +117,19 @@ export function GlassTabs<Id extends string = string>(
     }
   }, [frame?.x, frame?.width, stripWidth])
 
+  // Counted while it shows; going, it stamps when, for one that takes over.
+  React.useEffect(() => {
+    live.set(tabKey, (live.get(tabKey) ?? 0) + 1)
+    return () => {
+      live.set(tabKey, (live.get(tabKey) ?? 1) - 1)
+      const last = lastPill.get(tabKey)
+      if (last != null) lastPill.set(tabKey, { ...last, at: Date.now() })
+    }
+  }, [tabKey])
+
   const pillStyle = useAnimatedStyle(() => ({
     left: left.value,
     width: Math.max(0, right.value - left.value),
-    opacity: shown.value,
     transform: [{ scale: lift.value }]
   }))
 
@@ -124,7 +155,7 @@ export function GlassTabs<Id extends string = string>(
           {GLASS_PILL && (
             <GlassView
               interactive
-              tint={theme.pillActiveBackground}
+              tint={`${theme.pillActiveBackground}${GLASS_TINT_ALPHA}`}
               radius={theme.rem(PILL_HEIGHT_REM) / 2}
               style={styles.pillGlass}
             />
@@ -213,6 +244,22 @@ export function GlassTabs<Id extends string = string>(
   )
 }
 
+/**
+ * Where each strip's pill last settled, by its tabs, so a strip that takes
+ * over from another with the same tabs can carry the pill across rather than
+ * have it jump. `at` is when that strip went away; only a handover within
+ * `HANDOVER_MS` of it counts, so opening another game later starts its pill
+ * in place.
+ */
+const lastPill = new Map<
+  string,
+  { left: number; right: number; x: number; at: number }
+>()
+const HANDOVER_MS = 1500
+
+/** How many strips with each set of tabs are showing. */
+const live = new Map<string, number>()
+
 /** The compact pill's height: 36 points, as the strip's. */
 const PILL_HEIGHT_REM = 2.25
 
@@ -221,6 +268,12 @@ const PILL_INSET_REM = (3 - PILL_HEIGHT_REM) / 2
 
 /** Liquid Glass for the pill where the system draws it. */
 const GLASS_PILL = Platform.OS === 'ios'
+
+/**
+ * The green's strength on the glass, as a hex alpha: 80%, enough to carry
+ * the strip's colour and the white label, while the glass still shows.
+ */
+const GLASS_TINT_ALPHA = 'CC'
 
 /** Each target's side: half the 28 points between two labels. */
 function TARGET_SIDE(theme: Theme): number {

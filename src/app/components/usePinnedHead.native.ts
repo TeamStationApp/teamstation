@@ -299,10 +299,18 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
     },
     [glassKey]
   )
+  // Through a function made here: an object handed to `runOnJS` arrives as
+  // a copy, which is not the key the band looks itself up by.
+  const reportPinned = useCallback(
+    (on: boolean): void => {
+      markPinned(glassKey, on)
+    },
+    [glassKey]
+  )
   useAnimatedReaction(
     () => pinAt.value > 0 && Math.min(y.value, collapse.value) >= pinAt.value,
     (now, before) => {
-      if (now !== before) runOnJS(markPinned)(glassKey, now)
+      if (now !== before) runOnJS(reportPinned)(now)
     }
   )
   const pillStyle = useAnimatedStyle(() => ({
