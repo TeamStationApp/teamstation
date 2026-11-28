@@ -121,8 +121,8 @@ export function spacerFor(
  * `reach` is how far below the header the band's top edge is drawn now: 0
  * once it is pinned. Over the last band-height of its travel the glass grows
  * down from the header's lower edge, `progress` going from 0 to 1, and meets
- * the band's lower edge as the band pins; scrolling back shrinks it the same
- * way. It follows the page exactly, so a slow scroll is a slow grow and a
+ * the band's lower edge as the band pins (over less, if the band starts
+ * nearer than that); scrolling back shrinks it the same way. It follows the page exactly, so a slow scroll is a slow grow and a
  * held one holds it, as the card's name does going into the header.
  */
 export function glassGrowth(
@@ -132,10 +132,11 @@ export function glassGrowth(
 ): { reach: number; progress: number } {
   'worklet'
   const reach = Math.max(0, pinAt - Math.min(state.y, state.collapse))
+  // A band that starts nearer the header than its own height grows over the
+  // travel it has, so the glass is the header's alone at rest.
+  const travel = Math.min(bandHeight, pinAt)
   const progress =
-    pinAt <= 0 || bandHeight <= 0
-      ? 0
-      : Math.min(1, Math.max(0, 1 - reach / bandHeight))
+    travel <= 0 ? 0 : Math.min(1, Math.max(0, 1 - reach / travel))
   return { reach, progress }
 }
 
