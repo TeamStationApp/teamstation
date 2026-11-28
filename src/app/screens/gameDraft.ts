@@ -9,6 +9,7 @@ import type {
   GameIntent,
   GameProposal
 } from '../../common/gameApprovals'
+import { OPEN_SIDE_NAME } from '../../common/openSides'
 import type { PublicGroup } from '../../common/publicGroups'
 import type { SwapEffect } from '../../common/scoring/playsLost'
 import type { TeamChoice } from './PlaceholderTeamForm'
@@ -21,10 +22,40 @@ export type GameFormMode =
 
 export type Side = 'home' | 'away'
 
-/** Everything the scene holds before Save, placeholders included. */
+/** A side left open: its team is chosen later, in Game Settings. */
+export const TBD = { tbd: true } as const
+
+/** What a side holds once chosen: a team, or TBD. */
+export type SideChoice = TeamChoice | typeof TBD
+
+/** Whether a side was left TBD. */
+export const isTbd = (choice: SideChoice | undefined): choice is typeof TBD =>
+  choice != null && 'tbd' in choice
+
+/** The team a side holds: undefined for TBD and for a side not yet chosen. */
+export function sideTeamId(choice: SideChoice | undefined): string | undefined {
+  return choice == null || isTbd(choice) ? undefined : choice.group.id
+}
+
+/** What a chosen side is called: its team's name, or TBD. */
+export function sideName(choice: SideChoice): string {
+  return isTbd(choice) ? OPEN_SIDE_NAME : choice.group.name
+}
+
+/** The team a side holds, or undefined for TBD and an unchosen side. */
+export function sideTeam(
+  choice: SideChoice | undefined
+): TeamChoice | undefined {
+  return choice == null || isTbd(choice) ? undefined : choice
+}
+
+/**
+ * Everything the scene holds before Save, placeholders included. A side is
+ * `undefined` until it is chosen.
+ */
 export interface GameDraft {
-  home?: TeamChoice
-  away?: TeamChoice
+  home?: SideChoice
+  away?: SideChoice
   schedule: EventScheduleDraft
   venue: string
   address: string
@@ -110,11 +141,39 @@ export function choosesExhibition(
     : loaded?.game.seasonId != null
 }
 
-/** A saved game, ready to change. */
+/**
+ * The sides that may be TBD: from a team page, the side not holding the
+ * team; from a season page, both; when changing a game, only a side that is
+ * open now, which the change keeps open or assigns. A change that swaps the
+ * sides of a game with one open side moves its TBD with its named team: the
+ * side that team left may be TBD.
+ */
+export function tbdSides(
+  draft: GameDraft,
+  mode: GameFormMode,
+  loaded?: LoadedGame
+): Side[] {
+  if (mode.kind === 'edit') {
+    if (loaded == null) return []
+    const { homeTeamId, awayTeamId } = loaded.game
+    if (homeTeamId == null && awayTeamId == null) return ['home', 'away']
+    if (homeTeamId != null && awayTeamId != null) return []
+    const open: Side = homeTeamId == null ? 'home' : 'away'
+    const named = homeTeamId ?? awayTeamId
+    return [sideTeamId(draft[open]) === named ? otherSide(open) : open]
+  }
+  const source = sourceTeamId(mode)
+  if (source == null) return ['home', 'away']
+  return (['home', 'away'] as const).filter(
+    side => sideTeamId(draft[otherSide(side)]) === source
+  )
+}
+
+/** A saved game, ready to change: an open side loads as TBD. */
 export function loadedGameDraft(
   loaded: LoadedGame,
-  home: TeamChoice,
-  away: TeamChoice
+  home: SideChoice,
+  away: SideChoice
 ): GameDraft {
   const { game } = loaded
   return {
@@ -149,7 +208,7 @@ export function replaceableSides(
     return loaded?.canPropose === true ? ['home', 'away'] : []
   const source = sourceTeamId(mode)
   return (['home', 'away'] as const).filter(
-    side => source == null || draft[side]?.group.id !== source
+    side => source == null || sideTeamId(draft[side]) !== source
   )
 }
 
@@ -157,18 +216,23 @@ export function swapSides(draft: GameDraft): GameDraft {
   return { ...draft, home: draft.away, away: draft.home }
 }
 
-/** Puts a team on one side; never the other side's team, never over the source. */
+/**
+ * Puts a team, or TBD, on one side; never the other side's team, never over
+ * the source. TBD is never the other side's team.
+ */
 export function chooseTeam(
   draft: GameDraft,
   side: Side,
-  choice: TeamChoice,
+  choice: SideChoice,
   mode: GameFormMode
 ): GameDraft {
-  if (draft[otherSide(side)]?.group.id === choice.group.id)
+  const chosen = sideTeamId(choice)
+  if (chosen != null && sideTeamId(draft[otherSide(side)]) === chosen)
     throw new Error('Choose two different teams.')
   const source = sourceTeamId(mode)
-  if (source != null && draft[side]?.group.id === source)
-    throw new Error(`${draft[side].group.name} must play in this game.`)
+  const held = draft[side]
+  if (source != null && held != null && sideTeamId(held) === source)
+    throw new Error(`${sideName(held)} must play in this game.`)
   return { ...draft, [side]: choice }
 }
 
@@ -176,30 +240,42 @@ export function chooseTeam(
 export function draftProblem(
   draft: GameDraft,
   mode: GameFormMode,
-  sourceName?: string
+  sourceName?: string,
+  loaded?: LoadedGame
 ): string | undefined {
-  if (draft.home == null) return 'Choose the home team'
-  if (draft.away == null) return 'Choose the away team'
-  if (draft.home.group.id === draft.away.group.id)
-    return 'Choose two different teams'
+  const allowed = tbdSides(draft, mode, loaded)
+  for (const side of ['home', 'away'] as const) {
+    const choice = draft[side]
+    if (choice == null)
+      return allowed.includes(side)
+        ? `Choose the ${side} team or TBD`
+        : `Choose the ${side} team`
+    if (isTbd(choice) && !allowed.includes(side))
+      return `Choose the ${side} team`
+  }
+  const home = sideTeamId(draft.home)
+  const away = sideTeamId(draft.away)
+  if (home != null && home === away) return 'Choose two different teams'
   const source = sourceTeamId(mode)
-  if (
-    source != null &&
-    draft.home.group.id !== source &&
-    draft.away.group.id !== source
-  )
+  if (source != null && home !== source && away !== source)
     return `${sourceName ?? 'The team this game was created from'} must play in this game`
   return undefined
 }
 
-/** A team that exists on the server, rather than a placeholder still to be made. */
-const savedTeam = (choice: TeamChoice | undefined): string | undefined =>
-  choice == null || choice.placeholder != null ? undefined : choice.group.id
+/**
+ * A team that exists on the server, rather than a placeholder still to be
+ * made or TBD.
+ */
+const savedTeam = (choice: SideChoice | undefined): string | undefined => {
+  const team = sideTeam(choice)
+  return team == null || team.placeholder != null ? undefined : team.group.id
+}
 
 /**
  * What the selector for one side suggests around: the other side's team and
- * the season. A placeholder not yet made is never named; the side's own team
- * stands in for it when changing a game, then the season, then nothing.
+ * the season. A placeholder not yet made, or TBD, is never named; the side's
+ * own team stands in for it when changing a game, else the source team, then
+ * the season, then nothing.
  */
 export function selectorAnchor(
   draft: GameDraft,
@@ -219,16 +295,16 @@ export function selectorAnchor(
 /** A loaded game as the draft edits it, whoever may send the change. */
 export function editedGame(
   draft: GameDraft,
-  home: TeamChoice,
-  away: TeamChoice,
+  home: SideChoice,
+  away: SideChoice,
   loaded: LoadedGame
 ): GameIntent {
   const { startAt, endAt, timezone } = eventScheduleValue(draft.schedule)
   const address = draft.address.trim() === '' ? null : draft.address.trim()
   return {
     ...loaded.game,
-    homeTeamId: home.group.id,
-    awayTeamId: away.group.id,
+    homeTeamId: sideTeamId(home) ?? null,
+    awayTeamId: sideTeamId(away) ?? null,
     startAt,
     endAt,
     address,
@@ -247,13 +323,14 @@ export function editedGame(
 /**
  * The proposal Save sends, exactly as each mode always has: a team page
  * proposes as its team, a season page as its season, a change as the first
- * team the person may withdraw.
+ * team the person may withdraw, or, when they may withdraw none, as the
+ * game's season. A TBD side is sent as `null`.
  */
 export function gameProposalFields(
   draft: GameDraft,
   mode: GameFormMode,
-  home: TeamChoice,
-  away: TeamChoice,
+  home: SideChoice,
+  away: SideChoice,
   loaded?: LoadedGame
 ): Omit<GameProposal, 'idempotencyKey'> {
   const { startAt, endAt, timezone } = eventScheduleValue(draft.schedule)
@@ -264,11 +341,16 @@ export function gameProposalFields(
   if (mode.kind === 'edit') {
     if (loaded == null) throw new Error('Game settings could not load.')
     const senderId = loaded.withdrawTeamIds[0]
-    if (senderId == null)
+    const seasonId = loaded.game.seasonId ?? null
+    if (senderId == null && seasonId == null)
       throw new Error('You need administrator access to a participating team.')
     return {
-      sender: { kind: 'team', id: senderId },
-      initiatingTeamId: senderId,
+      ...(senderId == null
+        ? { sender: { kind: 'season' as const, id: seasonId! } }
+        : {
+            sender: { kind: 'team' as const, id: senderId },
+            initiatingTeamId: senderId
+          }),
       gameId: mode.gameId,
       expected: loaded.version,
       game: editedGame(draft, home, away, loaded)
@@ -284,7 +366,7 @@ export function gameProposalFields(
         ? { kind: 'team', id: source.id }
         : { kind: 'season', id: source.id },
     ...(source.kind === 'team' &&
-    [home.group.id, away.group.id].includes(source.id)
+    [sideTeamId(home), sideTeamId(away)].includes(source.id)
       ? { initiatingTeamId: source.id }
       : {}),
     game: {
@@ -292,8 +374,8 @@ export function gameProposalFields(
       arrivalTimeDelta,
       ...(address == null ? {} : { address }),
       endAt,
-      homeTeamId: home.group.id,
-      awayTeamId: away.group.id,
+      homeTeamId: sideTeamId(home) ?? null,
+      awayTeamId: sideTeamId(away) ?? null,
       seasonId: season?.id ?? null,
       startAt,
       timezone,

@@ -5,7 +5,8 @@ import { asPublicGroup } from '../../common/publicGroups'
 import {
   gameProposalFields,
   type LoadedGame,
-  loadedGameDraft
+  loadedGameDraft,
+  TBD
 } from './gameDraft'
 
 const choice = (id: string): any => ({
@@ -76,5 +77,23 @@ describe('the game draft’s field', () => {
     expect(
       loadedGameDraft(without, choice('home'), choice('away')).field
     ).equals(null)
+  })
+
+  it('keeps a game’s field when its open side loads as TBD and is sent as null', () => {
+    const mode = { kind: 'edit' as const, gameId: 'gam_one' }
+    const open: LoadedGame = {
+      ...loaded(true),
+      game: { ...loaded(true).game, awayTeamId: null }
+    }
+    const draft = loadedGameDraft(open, choice('home'), TBD)
+    expect(draft.away).equals(TBD)
+    expect(draft.field).deep.equals(field)
+    const sent = gameProposalFields(draft, mode, choice('home'), TBD, open)
+    expect(sent.game).include({
+      homeTeamId: 'home',
+      awayTeamId: null,
+      fieldId: 'fld_one',
+      fieldSize: '50/70'
+    })
   })
 })

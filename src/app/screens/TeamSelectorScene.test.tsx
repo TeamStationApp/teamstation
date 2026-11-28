@@ -20,6 +20,7 @@ import {
   unmount
 } from '../../test/gameFormDom'
 import { Button } from '../components'
+import { type SideChoice, TBD } from './gameDraft'
 import { orderCustodians, type TeamChoice } from './PlaceholderTeamForm'
 import { teamRowContext, TeamSelectorScene } from './TeamSelectorScene'
 
@@ -117,8 +118,13 @@ function api(
 async function open(
   client: TeamStationClient,
   props: Partial<React.ComponentProps<typeof TeamSelectorScene>> = {}
-): Promise<{ chosen: TeamChoice[]; closed: number[] }> {
+): Promise<{
+  chosen: TeamChoice[]
+  picks: SideChoice[]
+  closed: number[]
+}> {
   const chosen: TeamChoice[] = []
+  const picks: SideChoice[] = []
   const closed: number[] = []
   await mount(
     <TeamSelectorScene
@@ -127,12 +133,15 @@ async function open(
       anchor={{ teamId: 'tem_hawks' }}
       excludeIds={['tem_hawks']}
       custodians={[custodian]}
-      onChoose={choice => chosen.push(choice)}
+      onChoose={choice => {
+        picks.push(choice)
+        if (!('tbd' in choice)) chosen.push(choice)
+      }}
       onClose={() => closed.push(1)}
       {...props}
     />
   )
-  return { chosen, closed }
+  return { chosen, picks, closed }
 }
 
 describe('team selector scene', () => {
@@ -160,6 +169,24 @@ describe('team selector scene', () => {
       ...document.querySelectorAll<HTMLElement>('[role="button"]')
     ].map(node => node.getAttribute('aria-label') ?? node.textContent)
     expect(labels.at(-1)).match(/^Create Placeholder Team, /)
+  })
+
+  it('offers TBD first only where the side may be left open, and chooses it', async () => {
+    const { client } = api()
+    await open(client)
+    expect(document.querySelector('[data-testid="team-tbd"]')).equals(null)
+    expect(text()).not.includes('Choose the team later')
+    await unmount()
+
+    const { picks } = await open(client, { allowTbd: true })
+    const rows = [
+      ...document.querySelectorAll<HTMLElement>('[role="button"]')
+    ].map(node => node.getAttribute('aria-label') ?? node.textContent)
+    expect(rows.find(label => label !== 'Cancel team selector')).equals(
+      'TBD, Choose the team later'
+    )
+    await press('TBD, Choose the team later')
+    expect(picks).deep.equals([TBD])
   })
 
   it('marks the team this side holds now', async () => {

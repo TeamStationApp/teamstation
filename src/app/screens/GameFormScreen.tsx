@@ -3,7 +3,7 @@ import { Pressable, Switch, Text, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import type { EventType } from '../../common/eventInfo'
-import { wireSideId } from '../../common/openSides'
+import { OPEN_SIDE_NAME, wireSideId } from '../../common/openSides'
 import type { PublicGroup } from '../../common/publicGroups'
 import {
   resetWarning,
@@ -31,14 +31,21 @@ import {
   type GameDraft,
   type GameFormMode,
   gameProposalFields,
+  isTbd,
   type LoadedGame,
   loadedGameDraft,
   newGameDraft,
   replaceableSides,
   selectorAnchor,
   type Side,
+  type SideChoice,
+  sideName,
+  sideTeam,
+  sideTeamId,
   sourceTeamId,
   swapSides,
+  TBD,
+  tbdSides,
   TEAM_GAME_NOTE
 } from './gameDraft'
 import { orderCustodians, type TeamChoice } from './PlaceholderTeamForm'
@@ -173,9 +180,18 @@ export function GameFormScreen({
         return
       }
       const state = await client.gameScheduling(gameId!)
+      // An open side loads as TBD: only a named side has a team to read.
+      const sideOf = async (id: string | null): Promise<SideChoice> => {
+        if (id == null) return TBD
+        const team = await client.group({ kind: 'team', id })
+        return {
+          group: team.group,
+          canManage: team.canManage || team.canManagePeople === true
+        }
+      }
       const [home, away] = await Promise.all([
-        client.group({ kind: 'team', id: wireSideId(state.game.homeTeamId) }),
-        client.group({ kind: 'team', id: wireSideId(state.game.awayTeamId) })
+        sideOf(state.game.homeTeamId),
+        sideOf(state.game.awayTeamId)
       ])
       if (!current()) return
       setLoaded(state)
@@ -192,21 +208,15 @@ export function GameFormScreen({
           setSeasonConsentTeams(host.competingTeams.map(team => team.id))
       }
       setPermitted(state.canPropose)
-      setOriginalNames({
-        [home.group.id]: home.group.name,
-        [away.group.id]: away.group.name
-      })
-      const opened = loadedGameDraft(
-        state,
-        {
-          group: home.group,
-          canManage: home.canManage || home.canManagePeople === true
-        },
-        {
-          group: away.group,
-          canManage: away.canManage || away.canManagePeople === true
-        }
+      setOriginalNames(
+        Object.fromEntries(
+          [home, away].flatMap(side => {
+            const team = sideTeam(side)
+            return team == null ? [] : [[team.group.id, team.group.name]]
+          })
+        )
       )
+      const opened = loadedGameDraft(state, home, away)
       loadedDraft.current = opened
       setDraft(opened)
       setResetAsked(false)
@@ -236,8 +246,8 @@ export function GameFormScreen({
   }, [client, sourceKind, sourceId, gameId, creating, retry, begin])
 
   // Who may keep a placeholder made here, best first.
-  const homeId = draft?.home?.group.id
-  const awayId = draft?.away?.group.id
+  const homeId = sideTeamId(draft?.home)
+  const awayId = sideTeamId(draft?.away)
   const seasonId = draft?.season?.id ?? loaded?.game.seasonId ?? undefined
   useEffect(() => {
     let active = true
@@ -280,8 +290,9 @@ export function GameFormScreen({
       previous == null ? previous : { ...previous, ...fields }
     )
   }
-  const createPlaceholder = async (choice: TeamChoice): Promise<TeamChoice> => {
-    if (choice.placeholder == null) return choice
+  /** Makes a placeholder the side asked for; a team or TBD is kept as it is. */
+  const createPlaceholder = async (choice: SideChoice): Promise<SideChoice> => {
+    if (isTbd(choice) || choice.placeholder == null) return choice
     const key = choice.placeholder.idempotencyKey
     const held = createdPlaceholders.current.get(key)
     if (held != null) return held
@@ -295,11 +306,14 @@ export function GameFormScreen({
   }
   /**
    * Whether the draft differs from the game as it loaded only by its sides
-   * exchanged: what the caller may save as a swap, with no proposal.
+   * exchanged: what the caller may save as a swap, with no proposal. A game
+   * with an open side is never swapped this way: its swap is a proposal.
    */
   const onlySwapped = (): boolean => {
     const opened = loadedDraft.current
     if (draft == null || opened == null || loaded?.canSwap !== true)
+      return false
+    if (loaded.game.homeTeamId == null || loaded.game.awayTeamId == null)
       return false
     if (draft.home == null || draft.away == null) return false
     const fields = (value: GameDraft): string =>
@@ -333,7 +347,7 @@ export function GameFormScreen({
         id: gameId,
         status: 'accepted',
         gameId,
-        notice: `Home and away swapped: ${draft.home!.group.name} vs ${draft.away!.group.name}`
+        notice: `Home and away swapped: ${sideName(draft.home!)} vs ${sideName(draft.away!)}`
       })
   }
   const submitGame = async (): Promise<void> => {
@@ -342,7 +356,7 @@ export function GameFormScreen({
     setBusy(true)
     setError('')
     try {
-      const problem = draftProblem(draft, formMode, sourceName)
+      const problem = draftProblem(draft, formMode, sourceName, loaded)
       if (problem != null) throw new Error(`${problem}.`)
       if (
         creating &&
@@ -376,7 +390,7 @@ export function GameFormScreen({
       if (mounted.current)
         onSaved({
           ...result,
-          notice: `${result.status === 'accepted' ? (creating ? 'Game scheduled' : 'Game changes saved') : 'Game proposal sent'}: ${home.group.name} vs ${away.group.name}${draft.season == null ? '' : ` in ${draft.season.name}`}`
+          notice: `${result.status === 'accepted' ? (creating ? 'Game scheduled' : 'Game changes saved') : 'Game proposal sent'}: ${sideName(home)} vs ${sideName(away)}${draft.season == null ? '' : ` in ${draft.season.name}`}`
         })
     } catch (caught) {
       if (mounted.current)
@@ -477,16 +491,20 @@ export function GameFormScreen({
     season?.endsOn,
     draft.schedule.date
   ])
-  const problem = draftProblem(draft, formMode, sourceName)
-  const seasonApproves = [draft.away, draft.home].every(
+  const problem = draftProblem(draft, formMode, sourceName, loaded)
+  // Only a named side asks consent: TBD has no team to approve.
+  const named = [draft.away, draft.home].flatMap(choice => {
+    const team = sideTeam(choice)
+    return team == null ? [] : [team]
+  })
+  const seasonApproves = named.every(
     choice =>
-      choice != null &&
-      choice.placeholder == null &&
-      seasonConsentTeams.includes(choice.group.id)
+      choice.placeholder == null && seasonConsentTeams.includes(choice.group.id)
   )
-  const missing = [draft.away, draft.home]
-    .filter(choice => choice != null && !choice.canManage && !seasonApproves)
-    .map(choice => choice!.group.name)
+  const missing = named
+    .filter(choice => !choice.canManage && !seasonApproves)
+    .map(choice => choice.group.name)
+  const allowTbd = tbdSides(draft, formMode, loaded)
   const teamRow = (side: Side): React.ReactElement => {
     const choice = draft[side]
     const label = side === 'home' ? 'Home' : 'Away'
@@ -502,6 +520,14 @@ export function GameFormScreen({
       <ListRow
         title={`Choose ${label} Team`}
         subtitle={label}
+        emblemIcon="groups"
+        onPress={open}
+      />
+    ) : isTbd(choice) ? (
+      <ListRow
+        testID={`game-side-tbd-${side}`}
+        title={OPEN_SIDE_NAME}
+        subtitle={`${label} · Team to be decided`}
         emblemIcon="groups"
         onPress={open}
       />
@@ -739,10 +765,11 @@ export function GameFormScreen({
             )}
             {resetShown && loaded?.plays != null && draft.home != null && (
               <Text accessibilityRole="alert" style={styles.hint}>
-                {resetWarning(loaded.plays)} {draft.away?.group.name} will bat
-                first, and {draft.home.group.name} will be at home. Lineups,
-                guests and unavailable players move with their teams. Lineups go
-                back to how they were at the first pitch.
+                {resetWarning(loaded.plays)}{' '}
+                {draft.away == null ? '' : sideName(draft.away)} will bat first,
+                and {sideName(draft.home)} will be at home. Lineups, guests and
+                unavailable players move with their teams. Lineups go back to
+                how they were at the first pitch.
               </Text>
             )}
             {problem == null && missing.length > 0 && (
@@ -847,10 +874,11 @@ export function GameFormScreen({
           title={`Choose ${choosing === 'home' ? 'Home' : 'Away'} Team`}
           anchor={anchor!}
           excludeIds={[
-            draft[choosing === 'home' ? 'away' : 'home']?.group.id,
+            sideTeamId(draft[choosing === 'home' ? 'away' : 'home']),
             anchor?.teamId
           ].filter((id): id is string => id != null)}
-          currentId={draft[choosing]?.group.id}
+          currentId={sideTeamId(draft[choosing])}
+          allowTbd={allowTbd.includes(choosing)}
           custodians={custodians}
           custodianNote={custodianNote}
           onChoose={choice => {

@@ -39,6 +39,7 @@ import {
 } from './search'
 import { runSponsors } from './sponsors'
 import { runStreaming } from './streaming'
+import { runTbdOpponent } from './tbdOpponent'
 import { runTeamWithRoster } from './teamWithRoster'
 import { RATE_LIMIT_SCALE, runTess } from './tess'
 
@@ -117,6 +118,7 @@ describe('the fixtures script', function () {
     expect(Object.keys(WORLDS)).includes('packed-league')
     expect(Object.keys(WORLDS)).includes('packed-league-limit')
     expect(Object.keys(WORLDS)).includes('sponsors')
+    expect(Object.keys(WORLDS)).includes('tbd-opponent')
   })
 })
 
@@ -622,6 +624,116 @@ describe('fixture worlds', function () {
       lineup.map(id => jerseys.find(row => String(row.gumbo_id) === id)?.jersey)
     ).deep.equals(['1', '2', '3', '4', '5', '6', '7', '8', '9'])
     // The world runs on a database the baseline accepts: no other address.
+    expect(await refuseRealAddresses(the(), MAILBOX)).not.equals(undefined)
+  })
+
+  it('tbd-opponent gives Ravens a coach and a scorekeeper, Herons a coach, their season its administrator and scorekeeper, and a field, but no game', async function () {
+    const world = await runTbdOpponent({
+      db: the(),
+      mailbox: MAILBOX,
+      nonce: makeNonce()
+    })
+    const { ids, accounts } = world
+    expect(Object.keys(accounts).sort()).deep.equals([
+      'heronsCoach',
+      'ravensCoach',
+      'ravensScorekeeper',
+      'seasonAdmin',
+      'seasonScorekeeper'
+    ])
+    for (const account of Object.values(accounts))
+      expect(isTestAddress(MAILBOX, account.email)).equals(true)
+    const teams = await the()
+      .selectFrom('teams')
+      .select(['id', 'name', 'kind'])
+      .where('id', 'in', [ids.ravens, ids.herons])
+      .orderBy('name')
+      .execute()
+    expect(teams).deep.equals([
+      { id: ids.herons, name: `Herons ${world.nonce}`, kind: 'full' },
+      { id: ids.ravens, name: `Ravens ${world.nonce}`, kind: 'full' }
+    ])
+    expect(ids.ravensName).equals(`Ravens ${world.nonce}`)
+    const roles = await the()
+      .selectFrom('scope_roles')
+      .select(['user_id', 'scope_type', 'scope_id', 'role'])
+      .where(
+        'user_id',
+        'in',
+        Object.values(accounts).map(account => account.userId)
+      )
+      .execute()
+    const roleOf = (name: string): string[] =>
+      roles
+        .filter(row => row.user_id === accounts[name].userId)
+        .map(row => `${row.scope_type}:${row.scope_id}:${row.role}`)
+    expect(roleOf('ravensCoach')).deep.equals([`team:${ids.ravens}:coach`])
+    expect(roleOf('ravensScorekeeper')).deep.equals([
+      `team:${ids.ravens}:scorekeeper`
+    ])
+    expect(roleOf('heronsCoach')).deep.equals([`team:${ids.herons}:coach`])
+    expect(roleOf('seasonAdmin')).deep.equals([`season:${ids.season}:admin`])
+    expect(roleOf('seasonScorekeeper')).deep.equals([
+      `season:${ids.season}:scorekeeper`
+    ])
+    const members = await the()
+      .selectFrom('memberships')
+      .select(['user_id', 'team_id'])
+      .where('team_id', 'in', [ids.ravens, ids.herons])
+      .execute()
+    expect(members).to.have.deep.members([
+      { user_id: accounts.ravensCoach.userId, team_id: ids.ravens },
+      { user_id: accounts.ravensScorekeeper.userId, team_id: ids.ravens },
+      { user_id: accounts.heronsCoach.userId, team_id: ids.herons }
+    ])
+    const seasonTeams = await the()
+      .selectFrom('season_teams')
+      .select(['team_id', 'active'])
+      .where('season_id', '=', ids.season)
+      .execute()
+    expect(seasonTeams).to.have.deep.members([
+      { team_id: ids.ravens, active: true },
+      { team_id: ids.herons, active: true }
+    ])
+    const parents = await the()
+      .selectFrom('season_team_parents')
+      .select('team_id')
+      .where('season_id', '=', ids.season)
+      .execute()
+    expect(parents.map(row => row.team_id).sort()).deep.equals(
+      [ids.ravens, ids.herons].sort()
+    )
+    const field = await the()
+      .selectFrom('venue_fields')
+      .innerJoin(
+        'venue_claims',
+        'venue_claims.venue_id',
+        'venue_fields.venue_id'
+      )
+      .select([
+        'venue_fields.venue_id',
+        'venue_claims.league_id',
+        'venue_claims.status'
+      ])
+      .where('venue_fields.id', '=', ids.field)
+      .executeTakeFirstOrThrow()
+    expect(field).deep.equals({
+      venue_id: ids.venue,
+      league_id: ids.league,
+      status: 'approved'
+    })
+    const games = await the()
+      .selectFrom('games')
+      .select('id')
+      .where(eb =>
+        eb.or([
+          eb('home_team_id', 'in', [ids.ravens, ids.herons]),
+          eb('away_team_id', 'in', [ids.ravens, ids.herons]),
+          eb('season_id', '=', ids.season)
+        ])
+      )
+      .execute()
+    expect(games).deep.equals([])
     expect(await refuseRealAddresses(the(), MAILBOX)).not.equals(undefined)
   })
 
