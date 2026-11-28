@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { asGameDetail, type GameDetail } from '../../common/api'
+import { defaultEventTab } from './eventTabPolicy'
 import { gameActions, gameTabs, heroCoachSides } from './gameTabs'
 
 function gameWith(fields: Partial<GameDetail>): GameDetail {
@@ -274,6 +275,7 @@ describe('the pills across a game', function () {
     expect(ids(gameTabs({ game, now: before }))).deep.equals([
       'boxScore',
       'watch',
+      'plays',
       'info'
     ])
   })
@@ -286,6 +288,7 @@ describe('the pills across a game', function () {
     })
     expect(ids(gameTabs({ game, now: before }))).deep.equals([
       'watch',
+      'plays',
       'boxScore',
       'info'
     ])
@@ -307,6 +310,98 @@ describe('the pills across a game', function () {
       'boxScore',
       'info'
     ])
+  })
+
+  describe('Plays', function () {
+    const onReplay = (): void => undefined
+    const scored = gameWith({ hasScoringEvents: true, startAt })
+
+    it('follows Videos once a pitch is recorded, as the pill nobody lands on', function () {
+      const pills = gameTabs({ game: scored, now: before })
+      expect(pills.find(pill => pill.id === 'plays')).deep.equals({
+        id: 'plays',
+        label: 'Plays'
+      })
+      expect(ids(gameTabs({ game: scored, now: before }))).deep.equals([
+        'boxScore',
+        'watch',
+        'plays',
+        'info'
+      ])
+      expect(defaultEventTab(scored, before)).not.equals('plays')
+    })
+
+    it('sits between Videos and Replay once the game is over', function () {
+      const game = { ...scored, status: 'final', replayable: true }
+      expect(ids(gameTabs({ game, onReplay, now: before }))).deep.equals([
+        'boxScore',
+        'watch',
+        'plays',
+        'replay',
+        'info'
+      ])
+      expect(defaultEventTab(game, before)).equals('boxScore')
+    })
+
+    it('sits between Videos and Live while the game is scored on a live video', function () {
+      const game = {
+        ...scored,
+        status: 'inProgress',
+        replayable: true,
+        videos: live
+      }
+      const pills = gameTabs({ game, onReplay, now: atStart })
+      expect(ids(pills)).deep.equals([
+        'watch',
+        'plays',
+        'replay',
+        'boxScore',
+        'info'
+      ])
+      expect(pills[2].label).equals('Live')
+      expect(defaultEventTab(game, atStart)).equals('watch')
+    })
+
+    it('is shown from a pitch of the at-bat in progress, which the server counts as scoring', function () {
+      // `hasScoringEvents` is the server's `ts_play_has_started` over the
+      // stored plays and `currentPlay`: one pitch in progress turns it on.
+      const game = gameWith({
+        status: 'inProgress',
+        hasScoringEvents: true,
+        startAt
+      })
+      expect(ids(gameTabs({ game, now: atStart }))).includes('plays')
+    })
+
+    it('is left out before the first pitch, for a wholly imported game, and for an event', function () {
+      for (const game of [
+        gameWith({ startAt }),
+        gameWith({ startAt, hasScoringEvents: false, status: 'final' }),
+        gameWith({ startAt, status: 'final', replayable: true })
+      ])
+        expect(ids(gameTabs({ game, onReplay, now: atStart }))).not.includes(
+          'plays'
+        )
+      expect(
+        ids(
+          gameTabs({
+            game: { ...scored, eventKind: 'event' },
+            now: atStart
+          })
+        )
+      ).deep.equals(['info'])
+    })
+
+    it('is never the section a reader lands on', function () {
+      for (const game of [
+        scored,
+        { ...scored, status: 'final' },
+        { ...scored, videos: live },
+        { ...scored, status: 'inProgress' }
+      ])
+        for (const now of [before, atStart, atStart + 1e9])
+          expect(defaultEventTab(game, now)).not.equals('plays')
+    })
   })
 
   describe('Replay', function () {

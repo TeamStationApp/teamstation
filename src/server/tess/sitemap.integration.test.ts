@@ -183,7 +183,8 @@ describe('Tess sitemap', function () {
     ).deep.equals([
       ['tab', 'info', 'Info'],
       ['tab', 'boxScore', 'Box score'],
-      ['tab', 'watch', 'Videos']
+      ['tab', 'watch', 'Videos'],
+      ['tab', 'plays', 'Plays']
     ])
   })
 

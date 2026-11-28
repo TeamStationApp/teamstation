@@ -369,7 +369,7 @@ export type Pushed =
       gameId: string
       title: string
       /** Which half of the game screen to open on. */
-      tab?: 'info' | 'boxScore' | 'watch' | 'score'
+      tab?: 'info' | 'boxScore' | 'watch' | 'plays' | 'score'
       /** Start the video rather than waiting to be asked; `'live'` only a live one. */
       autoPlay?: boolean | 'live'
       /** Which video, and where in it, from a link to a moment. */

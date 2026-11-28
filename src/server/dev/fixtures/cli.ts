@@ -6,6 +6,7 @@ import { splitMailbox } from './address'
 import { refuseRealAddresses, runBaseline } from './baseline'
 import { runCoachGame } from './coachGame'
 import { runPackedLeague, runPackedLeagueLimit } from './packedLeague'
+import { runPlaysGame } from './playsGame'
 import { runRefreshNotices } from './refreshNotices'
 import { runSearch } from './search'
 import { runSponsors } from './sponsors'
@@ -29,6 +30,7 @@ export const WORLDS: Record<
   'team-with-roster': runTeamWithRoster,
   streaming: runStreaming,
   'coach-game': runCoachGame,
+  'plays-game': runPlaysGame,
   'packed-league': runPackedLeague,
   'packed-league-limit': runPackedLeagueLimit,
   'refresh-notices': runRefreshNotices,

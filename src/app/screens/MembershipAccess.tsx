@@ -8,6 +8,12 @@ import { WarningSheet } from '../components/WarningSheet'
 import { lstrings } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
 
+const resourceName = {
+  stats: 'Individual player stats',
+  videos: 'Videos',
+  plays: 'Plays'
+} as const
+
 /** A request is explicit and names one team; it never grants access itself. */
 export function MembershipAccess({
   client,
@@ -24,7 +30,7 @@ export function MembershipAccess({
   onSignIn: () => void
   onClose?: () => void
   presentation?: 'inline' | 'sheet'
-  resource?: 'stats' | 'videos'
+  resource?: 'stats' | 'videos' | 'plays'
 }): React.ReactElement {
   const theme = useTheme()
   const [choices, setChoices] = useState<typeof teams>()
@@ -92,13 +98,15 @@ export function MembershipAccess({
     ? 'Membership request sent'
     : resource === 'videos'
       ? lstrings.game_videos_members_only
-      : teams.length === 1
-        ? 'You need to be a member of this team to see individual player stats.'
-        : lstrings.box_score_members_only
+      : resource === 'plays'
+        ? lstrings.plays_members_only
+        : teams.length === 1
+          ? 'You need to be a member of this team to see individual player stats.'
+          : lstrings.box_score_members_only
   const detail =
     error ??
     (sent
-      ? `A team administrator will review your request. ${resource === 'videos' ? 'Videos' : 'Individual player stats'} become available after approval.`
+      ? `A team administrator will review your request. ${resourceName[resource]} become available after approval.`
       : !signedIn
         ? 'Log in or create an account first to request membership.'
         : choices != null
