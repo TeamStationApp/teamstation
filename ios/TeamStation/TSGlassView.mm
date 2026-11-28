@@ -184,8 +184,17 @@ static UIColor *TSColorFromHex(NSString *hex)
 
 - (void)setGlassTint:(NSString *)value
 {
+  if ([value isEqualToString:_glassTint]) return;
   _glassTint = [value copy];
-  [self applyEffect];
+  // On screen, a change of tint is animated: the tab pill clears as it
+  // lifts and colours again as it settles.
+  if (self.window == nil) {
+    [self applyEffect];
+    return;
+  }
+  [UIView animateWithDuration:0.25 animations:^{
+    [self applyEffect];
+  }];
 }
 
 - (void)setGlassInteractive:(BOOL)value

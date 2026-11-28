@@ -10,7 +10,9 @@ import {
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
-  withSpring
+  withSequence,
+  withSpring,
+  withTiming
 } from 'react-native-reanimated'
 
 import { pillPadding } from '../theme/pill'
@@ -62,6 +64,25 @@ export function GlassTabs<Id extends string = string>(
   const left = useSharedValue(0)
   const right = useSharedValue(0)
   const lift = useSharedValue(1)
+  // Lifted while it travels or is held: larger, and on iOS clearer glass,
+  // as the system's own glass controls do under a finger.
+  const [lifted, setLifted] = React.useState(false)
+  const settle = React.useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined
+  )
+  const liftFor = (ms: number): void => {
+    setLifted(true)
+    clearTimeout(settle.current)
+    settle.current = setTimeout(() => {
+      setLifted(false)
+    }, ms)
+  }
+  React.useEffect(
+    () => () => {
+      clearTimeout(settle.current)
+    },
+    []
+  )
   const placed = React.useRef(false)
   const lastX = React.useRef(0)
 
@@ -100,6 +121,11 @@ export function GlassTabs<Id extends string = string>(
       const slow = { damping: 20, stiffness: 150, mass: 0.9 }
       left.value = withSpring(nextLeft, forward ? slow : fast)
       right.value = withSpring(nextRight, forward ? fast : slow)
+      lift.value = withSequence(
+        withTiming(LIFT_SCALE, { duration: 140 }),
+        withSpring(1, { damping: 12, stiffness: 180 })
+      )
+      liftFor(LIFT_MS)
     }
     lastX.current = frame.x
     lastPill.set(tabKey, {
@@ -155,7 +181,9 @@ export function GlassTabs<Id extends string = string>(
           {GLASS_PILL && (
             <GlassView
               interactive
-              tint={`${theme.pillActiveBackground}${GLASS_TINT_ALPHA}`}
+              tint={`${theme.pillActiveBackground}${
+                lifted ? GLASS_TINT_LIFTED : GLASS_TINT_ALPHA
+              }`}
               radius={theme.rem(PILL_HEIGHT_REM) / 2}
               style={styles.pillGlass}
             />
@@ -182,10 +210,14 @@ export function GlassTabs<Id extends string = string>(
                 )
               }}
               onPressIn={() => {
-                if (isSelected) lift.value = withSpring(1.08)
+                if (!isSelected) return
+                lift.value = withSpring(LIFT_SCALE)
+                setLifted(true)
+                clearTimeout(settle.current)
               }}
               onPressOut={() => {
                 lift.value = withSpring(1)
+                if (isSelected) liftFor(120)
               }}
               onPress={() => {
                 onSelect(tab.id)
@@ -270,10 +302,16 @@ const PILL_INSET_REM = (3 - PILL_HEIGHT_REM) / 2
 const GLASS_PILL = Platform.OS === 'ios'
 
 /**
- * The green's strength on the glass, as a hex alpha: 80%, enough to carry
- * the strip's colour and the white label, while the glass still shows.
+ * The green's strength on the glass, as hex alphas: 55% at rest, enough to
+ * carry the strip's colour and the white label while the glass's own sheen
+ * and rim still show; 20% lifted, when it should read as clear glass.
  */
-const GLASS_TINT_ALPHA = 'CC'
+const GLASS_TINT_ALPHA = '8C'
+const GLASS_TINT_LIFTED = '33'
+
+/** How far, and for how long, the pill lifts as it travels to a tab. */
+const LIFT_SCALE = 1.12
+const LIFT_MS = 420
 
 /** Each target's side: half the 28 points between two labels. */
 function TARGET_SIDE(theme: Theme): number {
