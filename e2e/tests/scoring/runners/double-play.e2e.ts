@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { writeFileSync } from 'node:fs'
 
 import { expect } from 'chai'
@@ -25,7 +26,11 @@ import {
  * to drag. Once it is dragged, the relay plays itself out: the throw to 2nd
  * forces the runner from 1st, the throw to 1st retires the batter, with the
  * credits a hand-scored relay records, and any runner the ground ball moved
- * answers Safe, Out or Back before the play can close.
+ * answers Safe, Out or Back before the play can close. Caught out doubles
+ * off the runner who did not tag: one on 1st or 3rd by the catcher's throw to
+ * that base (or the baseman's own tag), one on 2nd by whoever the scorer says
+ * took the throw (or the catcher's tag), and with several runners on by the
+ * defender the scorer drags onto the occupied base he tagged.
  */
 
 interface Point {
@@ -600,6 +605,324 @@ async function groundOtherRunners(ctx: E2eContext): Promise<void> {
   })
 }
 
+/** The frame of `video` at `seconds`, written to `png`. */
+function frameAt(video: string, seconds: number, png: string): void {
+  execFileSync('ffmpeg', [
+    '-y',
+    '-loglevel',
+    'error',
+    '-ss',
+    Math.max(0, seconds).toFixed(3),
+    '-i',
+    video,
+    '-frames:v',
+    '1',
+    png
+  ])
+}
+
+/**
+ * Drags whoever plays `position` from where he stands to where the ball was
+ * caught: `up` points up the screen, `right` to the right, at a fielder's
+ * height so the grab's lift is the drop's too.
+ */
+async function placeCatch(
+  field: ScoringField,
+  position: string,
+  up: number,
+  right = 0
+): Promise<void> {
+  await field.shown(/^Tap or drag a player to where the ball was fielded/)
+  await sleep(800)
+  const at = (await field.field()).fielder(position, 5)
+  await field.m.dragAndDrop({
+    from: { point: point(at) },
+    to: { point: point({ x: at.x + right, y: at.y - up }) },
+    holdDuration: 100,
+    duration: 600
+  })
+}
+
+/** The last stored play, once there are more than `after`. */
+async function lastStored(
+  ctx: E2eContext,
+  field: ScoringField,
+  after: number,
+  check: (play: StoredPlay) => void
+): Promise<StoredPlay> {
+  let found: StoredPlay | undefined
+  await eventually(async () => {
+    const { plays } = await storedPlays(ctx, field)
+    expect(plays.length, 'plays stored').greaterThan(after)
+    found = plays.at(-1)!
+    check(found)
+  }, 30000)
+  return found!
+}
+
+/** The runner who left `base` in `play`: out there, credited by position. */
+function doubledOff(play: StoredPlay, base: string): string[] {
+  const runner = play.runners.find(found => found.movement.start === base)
+  expect(runner, `the runner from ${base}`).not.equals(undefined)
+  expect(runner!.movement.isOut, `the runner from ${base} out`).equals(true)
+  return runner!.credits.map(
+    credit => `${credit.credit} ${credit.position?.abbreviation}`
+  )
+}
+
+/** Where the element labelled `label` is drawn, or null. */
+async function boundsOf(
+  field: ScoringField,
+  label: string
+): Promise<{ x: number; y: number; width: number; height: number } | null> {
+  if (field.web)
+    return (await field.app.web!.page.evaluate(
+      `(() => { const n = [...document.querySelectorAll('[aria-label=${JSON.stringify(label)}]')].find(n => n.getClientRects().length > 0); if (n == null) return null; const r = n.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height } })()`
+    )) as never
+  const { flatten, labelOf } = await import('../../../rigs/coach/coachApp')
+  const node = flatten(await field.m.hierarchy()).find(
+    found => labelOf(found) === label && found.bounds != null
+  )
+  return node?.bounds ?? null
+}
+
+async function caughtOneRunner(ctx: E2eContext): Promise<void> {
+  // A walk: a runner on 1st, nobody out.
+  const field = await openScoringField(ctx, WALK)
+  const before = (await storedPlays(ctx, field)).plays.length
+  const video = ctx.artifact('caught-out-one.mp4')
+  await field.m.startRecording({ path: video })
+  await chooseDoublePlay(field, 'Caught out')
+  // The center fielder runs back for it.
+  await placeCatch(field, 'CF', 40)
+  await dragTrajectory(field, 30)
+  // His throw to 1B doubles the runner off: two out, nobody on, no window.
+  await field.shown(/ 2 outs /, 60000)
+  await sleep(2500)
+  await fetchRecording(field.m, await field.m.stopRecording(), video)
+  await ctx.checkpoint('thrown-to-first', {
+    expect: [{ text: 'Ball' }],
+    readBack: async () => {
+      expect(await outsShown(field)).equals(2)
+      expect(await field.showing('Time to edit play')).equals(false)
+      if (field.web)
+        for (const base of [1, 2, 3])
+          expect(await runnerDrawn(field, base), `runner on ${base}`).equals(
+            false
+          )
+      await lastStored(ctx, field, before, play => {
+        expect(doubledOff(play, '1B')).deep.equals([
+          'f_assist CF',
+          'f_putout 1B'
+        ])
+      })
+    }
+  })
+
+  // The next half: a third out, a walk and two steals put a runner on 3rd.
+  await field.seed([...STRIKEOUT, ...WALK])
+  await field.seed(stealing(1))
+  await field.seed(stealing(2))
+  await field.reopen()
+  await field.shown(/ 0 outs /)
+  const second = (await storedPlays(ctx, field)).plays.length
+  await chooseDoublePlay(field, 'Caught out')
+  // The third baseman catches it a step from where he stands: his own tag.
+  await placeCatch(field, '3B', 6, -4)
+  await dragTrajectory(field, 60)
+  await field.shown(/ 2 outs /, 60000)
+  await ctx.checkpoint('tagged-at-third', {
+    expect: [{ text: 'Ball' }],
+    readBack: async () => {
+      expect(await outsShown(field)).equals(2)
+      expect(await field.showing('Time to edit play')).equals(false)
+      await lastStored(ctx, field, second, play => {
+        expect(doubledOff(play, '3B')).deep.equals(['f_putout 3B'])
+      })
+    }
+  })
+}
+
+const NEXT_DEFENDER =
+  'Tap or drag the next defender, or hit Done to finish the out.'
+
+async function caughtSecondDone(ctx: E2eContext): Promise<void> {
+  // A walk and a steal: a runner on 2nd, nobody out.
+  const field = await openScoringField(ctx, WALK)
+  await field.seed(stealing(1))
+  await field.reopen()
+  await field.shown(/ 0 outs /)
+  const before = (await storedPlays(ctx, field)).plays.length
+  await chooseDoublePlay(field, 'Caught out')
+  await placeCatch(field, 'LF', 20)
+  await dragTrajectory(field, 30)
+  await field.shown(NEXT_DEFENDER, 60000)
+  await sleep(1500)
+  await field.m.takeScreenshot({ path: ctx.artifact('caught-out-second.png') })
+  await ctx.checkpoint('next-defender', {
+    expect: [{ text: NEXT_DEFENDER }],
+    readBack: async () => {
+      // No timer while he is asked.
+      expect(await field.showing('Time to edit play')).equals(false)
+    }
+  })
+  // The shortstop took the throw at 2nd: that is the out, nobody else asked.
+  await tapFielder(field, 'SS')
+  await field.shown(/ 2 outs /, 60000)
+  await sleep(1500)
+  await ctx.checkpoint('thrown-to-second', {
+    expect: [{ text: 'Ball' }],
+    readBack: async () => {
+      expect(await field.showing(NEXT_DEFENDER)).equals(false)
+      expect(await outsShown(field)).equals(2)
+      await lastStored(ctx, field, before, play => {
+        expect(doubledOff(play, '2B')).deep.equals([
+          'f_assist LF',
+          'f_putout SS'
+        ])
+      })
+    }
+  })
+
+  // The next half: a third out, a walk and a steal; Done this time.
+  await field.seed([...STRIKEOUT, ...WALK])
+  await field.seed(stealing(1))
+  await field.reopen()
+  await field.shown(/ 0 outs /)
+  const second = (await storedPlays(ctx, field)).plays.length
+  await chooseDoublePlay(field, 'Caught out')
+  await placeCatch(field, 'LF', 20)
+  await dragTrajectory(field, 30)
+  await field.shown(NEXT_DEFENDER, 60000)
+  await sleep(1000)
+  await field.tap('Finish defensive play')
+  await field.shown(/ 2 outs /, 60000)
+  await ctx.checkpoint('done', {
+    expect: [{ text: 'Ball' }],
+    readBack: async () => {
+      expect(await field.showing(NEXT_DEFENDER)).equals(false)
+      await lastStored(ctx, field, second, play => {
+        // The left fielder ran it in and tagged 2nd himself.
+        expect(doubledOff(play, '2B')).deep.equals(['f_putout LF'])
+      })
+    }
+  })
+}
+
+const TAG_INSTRUCTION = 'Drag the defender who tagged a base to that base.'
+
+async function caughtTagBase(ctx: E2eContext): Promise<void> {
+  // A walk, two steals and a walk: runners on 1st and 3rd, nobody out.
+  const field = await openScoringField(ctx, WALK)
+  await field.seed(stealing(1))
+  await field.seed(stealing(2))
+  await field.seed(WALK)
+  await field.reopen()
+  await field.shown(/ 0 outs /)
+  const before = (await storedPlays(ctx, field)).plays.length
+  const video = ctx.artifact('caught-out-tag.mp4')
+  await field.m.startRecording({ path: video })
+  const recorded = Date.now()
+  await chooseDoublePlay(field, 'Caught out')
+  await placeCatch(field, 'RF', 20)
+  await dragTrajectory(field, 30)
+  await field.shown(TAG_INSTRUCTION, 60000)
+  await sleep(1500)
+  const shape = await field.field()
+  const first = shape.base(1, 0)
+  const third = shape.base(3, 0)
+  await ctx.checkpoint('tag-a-base', {
+    expect: [
+      { text: TAG_INSTRUCTION },
+      { text: 'Tag 1st' },
+      { text: 'Tag 3rd' }
+    ],
+    readBack: async () => {
+      expect(await field.showing('Tag 2nd'), 'Tag 2nd').equals(false)
+      expect(await field.showing('Time to edit play')).equals(false)
+      // "Tag 1st" right of 1st, "Tag 3rd" left of 3rd.
+      const right = await boundsOf(field, 'Tag 1st')
+      const left = await boundsOf(field, 'Tag 3rd')
+      expect(right, 'Tag 1st').not.equals(null)
+      expect(left, 'Tag 3rd').not.equals(null)
+      expect(right!.x, 'Tag 1st right of 1st').greaterThan(first.x)
+      expect(left!.x + left!.width, 'Tag 3rd left of 3rd').lessThan(third.x)
+    }
+  })
+  // One slow stroke: the first baseman onto 1st and on to the empty 2nd,
+  // let go there. The frame at 1st shows the diamonds; the drop is refused.
+  const from = shape.fielder('1B', 5)
+  const atFirst = shape.base(1, 5)
+  const atSecond = shape.base(2, 5)
+  const points = [from, atFirst, atSecond]
+  const holdDuration = 300
+  const duration = 6000
+  const legs = [
+    Math.hypot(atFirst.x - from.x, atFirst.y - from.y),
+    Math.hypot(atSecond.x - atFirst.x, atSecond.y - atFirst.y)
+  ]
+  const start = (Date.now() - recorded) / 1000
+  await field.m.dragPath({
+    points: points.map(point),
+    holdDuration,
+    duration
+  })
+  // A moment after the stroke reaches 1st, so the diamonds are drawn there.
+  const reached =
+    start +
+    (holdDuration + (duration * (legs[0] + 2)) / (legs[0] + legs[1])) / 1000
+  await sleep(1500)
+  await ctx.checkpoint('refused-on-second', {
+    expect: [{ text: TAG_INSTRUCTION }],
+    readBack: async () => {
+      expect(await field.showing(TAG_INSTRUCTION)).equals(true)
+      expect(await field.showing('Tag 1st')).equals(true)
+      // Nothing logged: no runner on base is out, in the play stored so far.
+      const { plays, currentPlay } = await storedPlays(ctx, field)
+      for (const play of [...plays.slice(before), currentPlay])
+        expect(
+          (play?.runners ?? []).some(
+            runner => runner.movement.start != null && runner.movement.isOut
+          ),
+          'a runner out'
+        ).equals(false)
+    }
+  })
+  // Onto 1st: the right fielder's throw to 1B doubles the runner off.
+  await field.m.dragAndDrop({
+    from: { point: point(from) },
+    to: { point: point(atFirst) },
+    holdDuration: 100,
+    duration: 800
+  })
+  await field.shown('Time to edit play', 60000)
+  const window = await field.countdown()
+  await sleep(6500)
+  await fetchRecording(field.m, await field.m.stopRecording(), video)
+  frameAt(video, reached, ctx.artifact('caught-tag-base-after.png'))
+  await ctx.checkpoint('tagged-first', {
+    expect: [{ text: 'Ball' }],
+    readBack: async () => {
+      // The runner on 3rd had the five-second window, then the play closed.
+      expect(window, 'the window').not.equals(null)
+      if (window!.max != null) expect(window!.max).equals(5)
+      expect(window!.now).within(1, 5)
+      expect(await outsShown(field)).equals(2)
+      expect(await field.showing('Tag 1st')).equals(false)
+      if (field.web) {
+        expect(await runnerDrawn(field, 1), 'runner on 1st').equals(false)
+        expect(await runnerDrawn(field, 3), 'runner on 3rd').equals(true)
+      }
+      await lastStored(ctx, field, before, play => {
+        expect(doubledOff(play, '1B')).deep.equals([
+          'f_assist RF',
+          'f_putout 1B'
+        ])
+      })
+    }
+  })
+}
+
 /** Whether the control labelled `label` is disabled on the page. */
 async function disabled(field: ScoringField, label: string): Promise<boolean> {
   return (await field.app.web!.page.evaluate(
@@ -621,13 +944,20 @@ export default defineCoachSpec({
     'src/app/scoring/scoringFlow.ts',
     'src/app/scoring/battedBall.ts',
     'src/app/scoring/runnerChain.ts',
-    'src/app/scoring/RunnerControls.tsx'
+    'src/app/scoring/RunnerControls.tsx',
+    'src/app/scoring/TagBaseLabels.tsx',
+    'src/app/scoring/battedBallField.ts',
+    'src/app/field/FieldScene.tsx',
+    'src/app/field/DestinationMarker.tsx'
   ],
-  minutes: 12,
+  minutes: 20,
   faults: ['api-500', 'hidden-element'],
   scenarios: {
     'menu-visibility': menuVisibility,
     'six-four-three': sixFourThree,
-    'ground-other-runners': groundOtherRunners
+    'ground-other-runners': groundOtherRunners,
+    'caught-one-runner': caughtOneRunner,
+    'caught-second-done': caughtSecondDone,
+    'caught-tag-base': caughtTagBase
   }
 })

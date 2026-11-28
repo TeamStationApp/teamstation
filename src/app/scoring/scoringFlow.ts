@@ -158,7 +158,9 @@ const DRAFTING = [
   'chooseDefender',
   'runnerDecision',
   'runnerReason',
-  'errorCredit'
+  'errorCredit',
+  // A Caught out waits for the scorer to drag the defender who tagged a base.
+  'tagBase'
 ]
 
 /** The step the screen is on once everything has moved. */
