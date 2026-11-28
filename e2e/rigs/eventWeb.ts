@@ -7,6 +7,7 @@ import {
   SCORING_FEATURES
 } from '../../src/common/scoring/teamRecord'
 import type { Emulation } from '../core/browserCdp'
+import { retryWhileBusy } from '../core/busyRetry'
 import type { FixtureAccount } from '../core/fixtures'
 import type { HarnessContext, WebSession } from '../core/spec'
 import type { Page } from '../core/web'
@@ -76,10 +77,17 @@ export async function tokenOf(
   const key = `${ctx.stack.origin} ${account.email}`
   const known = tokens.get(key)
   if (known != null) return known
-  const token = await (deps.signIn ?? apiSignIn)(
-    `${ctx.stack.origin}/api/v1`,
-    account
+  const what = `signing ${account.email} in on ${ctx.stack.origin}`
+  const signIn = deps.signIn ?? apiSignIn
+  // Parallel scenarios can find the stack's password hashing busy.
+  const token: unknown = await retryWhileBusy(
+    what,
+    async () => await signIn(`${ctx.stack.origin}/api/v1`, account),
+    { sleep: deps.sleep }
   )
+  if (typeof token !== 'string' || token === '') {
+    throw new Error(`${what} answered no session`)
+  }
   tokens.set(key, token)
   return token
 }

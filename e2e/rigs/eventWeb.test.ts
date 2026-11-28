@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
+import { HttpError } from '../../src/common/errors'
 import { SCORING_FEATURES } from '../../src/common/scoring/teamRecord'
 import {
   api,
@@ -245,6 +246,40 @@ describe('eventWeb', function () {
       (await api(fake.ctx, who, 'GET', '/z', undefined, { fetch: fetcher }))
         .body
     ).to.equal('not json')
+  })
+
+  it('signs in again while the stack is busy hashing, and names a sign-in with no session', async function () {
+    const fake = harness()
+    let tries = 0
+    const waits: number[] = []
+    const busyThenIn = {
+      signIn: async () => {
+        if (++tries < 3) {
+          throw new HttpError(
+            'unavailable',
+            'Password verification is busy. Please try again'
+          )
+        }
+        return 'tok-busy'
+      },
+      sleep: async (ms: number) => {
+        waits.push(ms)
+      }
+    }
+    const who = { email: 'busy@example.test', password: 'p' }
+    expect(await tokenOf(fake.ctx, who, busyThenIn)).to.equal('tok-busy')
+    expect(tries).to.equal(3)
+    expect(waits).to.have.length(2)
+    const none = { email: 'none@example.test', password: 'p' }
+    const failure = await tokenOf(fake.ctx, none, {
+      signIn: async () => undefined as unknown as string
+    }).then(
+      () => null,
+      (error: unknown) => (error as Error).message
+    )
+    expect(failure).to.equal(
+      'signing none@example.test in on https://e2e.example.test answered no session'
+    )
   })
 
   it('runs setup statements on the stack and answers their rows', async function () {
