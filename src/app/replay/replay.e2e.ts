@@ -393,14 +393,22 @@ async function replay(m: Device): Promise<void> {
   await signInWeb(m, LEAGUE)
   await openGame(m, FINAL)
   assert.ok((await pillLabels(m)).includes('Replay'), 'no Replay pill')
+  // The page's own log of the card, kept from before the tap: "Play ball!"
+  // shows for two seconds from the moment the replay mounts, which a
+  // driver's tap, wait and look can outlast on a droplet. The pill opens the
+  // replay in the same page, so the log sees the first thing the card says.
+  await evalJson<boolean>(m, CARD_LOG)
   await m.tapOn({ text: 'Replay' })
   await m.assertVisible({ id: 'game-replay', timeout: 20000 })
-  // Read before anything else: "Play ball!" shows for two seconds.
-  const opening = (await firstCard(m)).card
+  await firstCard(m)
+  const said = (await cards(m)).filter(card => card.text !== '')
+  const opening = said[0]?.text ?? ''
   assert.ok(
     opening.startsWith('Play ball!'),
     `the replay opens on Play ball!, not ${opening}`
   )
+  if (said.length > 1)
+    console.log(`Play ball! showed for ${said[1].t - said[0].t} ms`)
   await m.assertVisible({ id: 'replay-exit' })
   await m.assertVisible({ id: 'replay-speaker' })
   await m.assertVisible({ id: 'replay-pause' })
