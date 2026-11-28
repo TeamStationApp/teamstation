@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import {
+  avcHeaderOf,
   configurationOfInit,
   type DecoderConfiguration,
   hevcHeaderOf,
@@ -10,6 +11,9 @@ import {
   soundHeaderOf
 } from './decoderConfig'
 import {
+  avcHeaderBody,
+  avcParameterSetNals,
+  configuredAvcInit,
   configuredInit,
   hevcHeaderBody,
   hevcInit,
@@ -151,10 +155,107 @@ describe("whether a publish can share a recording's init segment", function () {
   })
 })
 
+describe("whether an H.264 publish can share a recording's init segment", function () {
+  const held = configurationOfInit(
+    configuredAvcInit(avcParameterSetNals(1), SOUND)
+  )!
+  const header = (
+    at: number,
+    kind: 'classic' | 'enhanced' = 'classic'
+  ): Buffer | undefined =>
+    avcHeaderOf(avcHeaderBody(kind, avcParameterSetNals(at)))
+
+  it("reads an avc1 init segment's SPS and PPS as H.264, and an hvc1 one as HEVC", function () {
+    expect(held.family).equals('h264')
+    expect(held.parameterSets).deep.equals(
+      avcParameterSetNals(1)
+        .map(nal => nal.toString('hex'))
+        .sort()
+    )
+    expect(held.sound?.equals(SOUND)).equals(true)
+    expect(
+      configurationOfInit(configuredInit(parameterSetNals(1)))?.family
+    ).equals('hevc')
+  })
+
+  it('leaves out anything in an avcC that is not a parameter set', function () {
+    const init = configuredAvcInit([
+      ...avcParameterSetNals(1),
+      Buffer.from([0x67, 0x42, 0, 0x1e, 9, 9])
+    ])
+    // The second SPS, made an SEI where only parameter sets belong.
+    init[init.indexOf(Buffer.from([0x67, 0x42, 0, 0x1e, 9, 9]))] = 0x06
+    expect(configurationOfInit(init)?.parameterSets).deep.equals(
+      held.parameterSets
+    )
+  })
+
+  it('says nothing of a damaged avcC', function () {
+    const damaged = configuredAvcInit(avcParameterSetNals(1))
+    const avcC = damaged.indexOf(Buffer.from('avcC', 'latin1'))
+    // The SPS's length, now running past the end of the box.
+    damaged.writeUInt16BE(0x4000, avcC + 4 + 6)
+    expect(configurationOfInit(damaged)).equals(undefined)
+  })
+
+  for (const kind of ['classic', 'enhanced'] as const) {
+    it(`finds the record in a ${kind} H.264 sequence header`, function () {
+      expect(
+        publishDiffers(held, { avcHeader: header(1, kind), soundHeader: SOUND })
+      ).equals(false)
+      expect(
+        publishDiffers(held, { avcHeader: header(2, kind), soundHeader: SOUND })
+      ).equals(true)
+    })
+  }
+
+  it('takes no other packet for an H.264 sequence header', function () {
+    expect(avcHeaderOf(undefined)).equals(undefined)
+    expect(avcHeaderOf(Buffer.from([0x17, 0, 0, 0, 0]))).equals(undefined)
+    const coded = avcHeaderBody('classic', avcParameterSetNals(1))
+    coded[1] = 1
+    expect(avcHeaderOf(coded), 'a picture').equals(undefined)
+    const hevc = hevcHeaderBody('classic', parameterSetNals(1))
+    expect(avcHeaderOf(hevc), 'HEVC').equals(undefined)
+    expect(
+      avcHeaderOf(hevcHeaderBody('enhanced', parameterSetNals(1))),
+      'the hvc1 fourcc'
+    ).equals(undefined)
+    const frame = avcHeaderBody('enhanced', avcParameterSetNals(1))
+    frame[0] = 0x91
+    expect(avcHeaderOf(frame), 'a coded frame').equals(undefined)
+  })
+
+  it("compares the header of the recording's own codec", function () {
+    const hevcHeader = hevcHeaderOf(
+      hevcHeaderBody('classic', parameterSetNals(1))
+    )
+    expect(
+      publishDiffers(held, { hevcHeader, soundHeader: SOUND }),
+      'an H.264 recording and only an HEVC header'
+    ).equals(true)
+    const hevcHeld = configurationOfInit(
+      configuredInit(parameterSetNals(1), SOUND)
+    )!
+    expect(
+      publishDiffers(hevcHeld, { avcHeader: header(1), soundHeader: SOUND }),
+      'an HEVC recording and only an H.264 header'
+    ).equals(true)
+    expect(
+      publishDiffers(held, {
+        avcHeader: header(1)!.subarray(0, 8),
+        soundHeader: SOUND
+      }),
+      'a cut header'
+    ).equals(true)
+  })
+})
+
 describe('the silence for a publish with no sound', function () {
   const none = { says: { noSound: true } }
   const STANDARD = { sampleRate: 48000, channelLayout: 'stereo' }
   const held = (sound?: Buffer): DecoderConfiguration => ({
+    family: 'hevc',
     parameterSets: [],
     sound
   })

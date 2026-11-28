@@ -144,6 +144,33 @@ describe('a synthetic camera fixture', function () {
     ])
   })
 
+  it('encodes H.264 with no B-frames when asked, and HEVC unless', async function () {
+    const h264 = fixtureArgs('/f/h.flv', 30, 'h264')
+    expect(h264).includes('libx264')
+    expect(h264).not.includes('libx265')
+    expect(
+      h264.slice(h264.indexOf('-bf'), h264.indexOf('-bf') + 2)
+    ).deep.equals(['-bf', '0'])
+    expect(fixtureArgs('/f/h.flv')).deep.equals(
+      fixtureArgs('/f/h.flv', 30, 'hevc')
+    )
+    let args: string[] = []
+    await renderFixture(
+      {
+        label: 'SynthH',
+        minutes: 0.001,
+        out: '/f/h.flv',
+        ffmpeg: 'ff',
+        codec: 'h264'
+      },
+      (ffmpeg, given) => {
+        args = given
+        return { video: pipe(), audio: pipe(), exited: Promise.resolve(0) }
+      }
+    )
+    expect(args).deep.equals(fixtureArgs('/f/h.flv', FPS, 'h264'))
+  })
+
   it('reads its command line', function () {
     expect(
       parseRenderArgs([
@@ -157,6 +184,40 @@ describe('a synthetic camera fixture', function () {
         'ff'
       ])
     ).deep.equals({ label: 'SynthD', minutes: 30, out: 'o.flv', ffmpeg: 'ff' })
+    expect(
+      parseRenderArgs([
+        '--label',
+        'H',
+        '--minutes',
+        '1',
+        '--out',
+        'o',
+        '--ffmpeg',
+        'f',
+        '--codec',
+        'h264'
+      ])
+    ).deep.equals({
+      label: 'H',
+      minutes: 1,
+      out: 'o',
+      ffmpeg: 'f',
+      codec: 'h264'
+    })
+    expect(() =>
+      parseRenderArgs([
+        '--label',
+        'H',
+        '--minutes',
+        '1',
+        '--out',
+        'o',
+        '--ffmpeg',
+        'f',
+        '--codec',
+        'vp9'
+      ])
+    ).throws('--codec is hevc or h264')
     expect(() => parseRenderArgs(['--label'])).throws('unknown or empty')
     expect(() => parseRenderArgs(['--label', 'x'])).throws(
       '--minutes is needed'

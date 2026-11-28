@@ -1,10 +1,10 @@
-import { boxesIn, hvcCPath, hvcCUnits } from './holeFiller'
+import { avcCPath, boxesIn, hvcCPath, hvcCUnits } from './holeFiller'
 
 /**
  * Whether a publish can share a recording's init segment.
  *
- * Every picture in an `hvc1` track relies on the parameter sets in its init
- * segment, and every sound frame on the AAC configuration there. A publish
+ * Every picture in an `hvc1` or `avc1` track relies on the parameter sets in
+ * its init segment, and every sound frame on the AAC configuration there. A publish
  * that continues a recording under the same name replaces that init segment,
  * so one configured differently leaves everything already recorded undecodable
  * (`spawnPrepared` gives it an init segment of its own instead). The comparison
@@ -18,9 +18,17 @@ import { boxesIn, hvcCPath, hvcCUnits } from './holeFiller'
  * those publishes differ only in timestamps, which each segment carries.
  */
 
+/** The two codecs a recording can be in. */
+export type CodecFamily = 'hevc' | 'h264'
+
 /** What a decoder is told about a recording before its first picture. */
 export interface DecoderConfiguration {
-  /** Its VPS, SPS and PPS units, in hexadecimal, sorted. */
+  /** Which codec its pictures are in. */
+  family: CodecFamily
+  /**
+   * Its parameter set units, in hexadecimal, sorted: VPS, SPS and PPS for
+   * HEVC, SPS and PPS for H.264.
+   */
   parameterSets: string[]
   /** The AAC `AudioSpecificConfig`. Absent with no sound track. */
   sound?: Buffer
@@ -30,6 +38,8 @@ export interface DecoderConfiguration {
 export interface HeardPublish {
   /** The body of its HEVC sequence header. */
   hevcHeader?: Buffer
+  /** The body of its H.264 sequence header. */
+  avcHeader?: Buffer
   /** Its `AudioSpecificConfig`. */
   soundHeader?: Buffer
   /** What its metadata said of sound. Metadata leaving it out says nothing. */
@@ -46,11 +56,42 @@ export interface SilentSound {
 /** VPS, SPS and PPS: what a slice refers to. */
 const PARAMETER_SET_TYPES = new Set([32, 33, 34])
 
-function parameterSets(hvcC: Buffer): string[] {
-  return hvcCUnits(hvcC)
-    .units.filter(nal => PARAMETER_SET_TYPES.has((nal[0] >> 1) & 0x3f))
-    .map(nal => nal.toString('hex'))
-    .sort()
+/** H.264's SPS and PPS. */
+const AVC_PARAMETER_SET_TYPES = new Set([7, 8])
+
+/**
+ * The SPS and PPS units of an AVCDecoderConfigurationRecord: five bytes of
+ * profile, level and length size, a count of SPS (low five bits) each behind a
+ * 16-bit length, then a count of PPS, the same. What follows them, the high
+ * profiles' chroma and bit depth, repeats what the SPS says.
+ */
+function avcCUnits(avcC: Buffer): Buffer[] {
+  const units: Buffer[] = []
+  let at = 5
+  for (const mask of [0x1f, 0xff]) {
+    if (at >= avcC.length) throw new RangeError('a short avcC')
+    const count = avcC[at++] & mask
+    for (let i = 0; i < count; i++) {
+      const length = avcC.readUInt16BE(at)
+      if (at + 2 + length > avcC.length) throw new RangeError('a short avcC')
+      units.push(avcC.subarray(at + 2, at + 2 + length))
+      at += 2 + length
+    }
+  }
+  return units
+}
+
+/** The parameter sets of a decoder configuration record of `family`. */
+function parameterSets(family: CodecFamily, record: Buffer): string[] {
+  const units =
+    family === 'hevc'
+      ? hvcCUnits(record).units.filter(nal =>
+          PARAMETER_SET_TYPES.has((nal[0] >> 1) & 0x3f)
+        )
+      : avcCUnits(record).filter(nal =>
+          AVC_PARAMETER_SET_TYPES.has(nal[0] & 0x1f)
+        )
+  return units.map(nal => nal.toString('hex')).sort()
 }
 
 /** The AAC configuration in an `esds` box's descriptors. */
@@ -105,17 +146,24 @@ function soundOf(init: Buffer): Buffer | undefined {
   return undefined
 }
 
-/** An init segment's configuration, or undefined when it holds no `hvcC`. */
+/**
+ * An init segment's configuration, or undefined when it holds neither an
+ * `hvcC` nor an `avcC`.
+ */
 export function configurationOfInit(
   init: Buffer
 ): DecoderConfiguration | undefined {
   try {
-    const path = hvcCPath(init)
+    const hevc = hvcCPath(init)
+    const path = hevc ?? avcCPath(init)
     if (path == null) return undefined
-    const hvcC = path[path.length - 1]
+    const family: CodecFamily = hevc != null ? 'hevc' : 'h264'
+    const record = path[path.length - 1]
     return {
+      family,
       parameterSets: parameterSets(
-        init.subarray(hvcC.start + hvcC.header, hvcC.end)
+        family,
+        init.subarray(record.start + record.header, record.end)
       ),
       sound: soundOf(init)
     }
@@ -135,6 +183,20 @@ export function hevcHeaderOf(data: Buffer | undefined): Buffer | undefined {
   const classic = (data[0] & 0x8f) === 12 && data[1] === 0
   const enhanced =
     (data[0] & 0x8f) === 0x80 && data.toString('latin1', 1, 5) === 'hvc1'
+  return classic || enhanced ? data.subarray(5) : undefined
+}
+
+/**
+ * The AVCDecoderConfigurationRecord in a video sequence header's FLV body,
+ * classic (a codec nibble of 7 and an `AVCPacketType` of 0, then a composition
+ * time) or Enhanced RTMP (the extended bit, `PacketTypeSequenceStart`, then the
+ * fourcc `avc1`). Both put it five bytes in. Undefined for any other packet.
+ */
+export function avcHeaderOf(data: Buffer | undefined): Buffer | undefined {
+  if (data == null || data.length <= 5) return undefined
+  const classic = (data[0] & 0x8f) === 7 && data[1] === 0
+  const enhanced =
+    (data[0] & 0x8f) === 0x80 && data.toString('latin1', 1, 5) === 'avc1'
   return classic || enhanced ? data.subarray(5) : undefined
 }
 
@@ -205,7 +267,7 @@ export function silenceFor(
 
 /**
  * Whether a publish would have to replace what `held` describes. One that has
- * shown no readable header has nothing to say it matches, and that goes for
+ * shown no readable header in `held`'s codec has nothing to say it matches, and that goes for
  * sound as much as for the picture: FFmpeg writes the init segment from what
  * reaches it, so a publish that shows no sound header replaces a recording's
  * init segment with one that has no sound track. Metadata is no promise of
@@ -218,10 +280,11 @@ export function publishDiffers(
   held: DecoderConfiguration,
   heard: HeardPublish
 ): boolean {
-  if (heard.hevcHeader == null) return true
+  const header = held.family === 'h264' ? heard.avcHeader : heard.hevcHeader
+  if (header == null) return true
   let published: string[]
   try {
-    published = parameterSets(heard.hevcHeader)
+    published = parameterSets(held.family, header)
   } catch {
     return true
   }

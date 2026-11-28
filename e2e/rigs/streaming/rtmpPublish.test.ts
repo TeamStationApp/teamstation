@@ -7,6 +7,7 @@ import {
   amfEncode,
   amfEncodeAll,
   ChunkReader,
+  enhanceAvcTag,
   FlvReader,
   MSG,
   parseRtmpUrl,
@@ -273,6 +274,83 @@ describe('RTMP publishing', function () {
     expect(() => {
       publisher.sendTag({ type: 8, timestamp: 0, data: Buffer.alloc(1) })
     }).throws(/closed/)
+    publisher.close()
+  })
+
+  it('rewrites classic H.264 as Enhanced RTMP avc1, and leaves the rest alone', function () {
+    const record = Buffer.from([1, 0x64, 0, 0x28, 0xff, 0xe1, 0, 2, 0x67, 1])
+    const header = enhanceAvcTag({
+      type: MSG.video,
+      timestamp: 0,
+      data: Buffer.concat([Buffer.from([0x17, 0, 0, 0, 0]), record])
+    })
+    expect(header.data[0], 'SequenceStart of a keyframe').equals(0x90)
+    expect(header.data.toString('latin1', 1, 5)).equals('avc1')
+    expect(header.data.subarray(5).equals(record)).equals(true)
+
+    const nals = Buffer.from([0, 0, 0, 2, 0x65, 0x88])
+    const frame = enhanceAvcTag({
+      type: MSG.video,
+      timestamp: 33,
+      data: Buffer.concat([Buffer.from([0x27, 1, 0, 0, 66]), nals])
+    })
+    expect(frame.timestamp).equals(33)
+    expect(frame.data[0], 'CodedFrames of an inter frame').equals(0xa1)
+    expect(frame.data.toString('latin1', 1, 5)).equals('avc1')
+    expect(frame.data.readUIntBE(5, 3), 'its composition time').equals(66)
+    expect(frame.data.subarray(8).equals(nals)).equals(true)
+
+    const end = enhanceAvcTag({
+      type: MSG.video,
+      timestamp: 99,
+      data: Buffer.from([0x17, 2, 0, 0, 0])
+    })
+    expect(
+      end.data.equals(Buffer.concat([Buffer.from([0x92]), Buffer.from('avc1')]))
+    ).equals(true)
+
+    for (const tag of [
+      {
+        type: MSG.audio,
+        timestamp: 0,
+        data: Buffer.from([0xaf, 0, 0x11, 0x90])
+      },
+      {
+        type: MSG.video,
+        timestamp: 0,
+        data: Buffer.from([0x1c, 0, 0, 0, 0, 1])
+      },
+      { type: MSG.video, timestamp: 0, data: Buffer.from([0x17, 5, 0, 0, 0]) },
+      { type: MSG.video, timestamp: 0, data: Buffer.from([0x17]) },
+      { type: MSG.data, timestamp: 0, data: Buffer.from([2, 0, 0]) }
+    ]) {
+      expect(enhanceAvcTag(tag)).equals(tag)
+    }
+  })
+
+  it('sends H.264 as Enhanced RTMP when asked, and offers avc1 in its connect', async function () {
+    const server = new FakeRtmpServer({ greet: [] })
+    const publisher = new RtmpPublisher(server.socket, parseRtmpUrl(URL), {
+      flv: 'enhanced'
+    })
+    await publisher.open()
+    const connect = server.commands()[0][2] as Record<string, unknown>
+    expect(connect.fourCcList).deep.equals(['hvc1', 'avc1'])
+    publisher.sendTag({
+      type: MSG.video,
+      timestamp: 0,
+      data: Buffer.from([0x17, 0, 0, 0, 0, 1])
+    })
+    publisher.sendTag({
+      type: MSG.audio,
+      timestamp: 0,
+      data: Buffer.from([0xaf, 1])
+    })
+    const media = server.received.filter(
+      m => m.type === MSG.video || m.type === MSG.audio
+    )
+    expect(media[0].payload.toString('latin1', 1, 5)).equals('avc1')
+    expect(media[1].payload.equals(Buffer.from([0xaf, 1]))).equals(true)
     publisher.close()
   })
 

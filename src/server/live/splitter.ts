@@ -13,10 +13,13 @@ import {
 } from 'fs'
 import type { Server } from 'net'
 
-import { CODEC_REFUSAL } from '../../common/api'
+import { STREAM_REFUSAL_PREFIXES } from '../../common/api'
+import { codecsFromInit } from '../media/codecString'
 import { KEEP_STREAM_TIMES } from '../media/ffmpeg'
 import { segmentPictureSec } from '../media/trackStarts'
 import {
+  avcHeaderOf,
+  type CodecFamily,
   configurationOfInit,
   type DecoderConfiguration,
   type HeardPublish,
@@ -118,6 +121,8 @@ interface NmsPacket {
   flags: number
   /** Milliseconds, on the publisher's clock. */
   dts: number
+  /** When the picture is shown, on the same clock. */
+  pts?: number
   /**
    * What a video packet says it carries, read as `videoCodec` is. Nought when
    * node-media-server could not read it.
@@ -458,10 +463,16 @@ interface IngressRuntime {
   bytesPerSecond: number
   bytesAtLastTick: number
   session?: NmsSession
-  /** Whether the stream's codec has been looked at yet. Once per publish. */
-  codecChecked?: boolean
   /**
-   * The publish now on this key has shown it is HEVC, and the controller has
+   * Whether the ingest has decided on the publish now on this key: refused it
+   * (`streamRefusal`), or accepted it once it has shown everything that
+   * decision needs (`shownAcceptable`). Unset while `streamRefusal` has
+   * nothing against it yet, so a codec heard early does not end the check.
+   * Once per publish.
+   */
+  decided?: boolean
+  /**
+   * The publish now on this key has shown it may be recorded, and the controller has
    * heard of it. Until then it is only somebody connected: nothing is said of
    * it, because a publish the ingest goes on to refuse was never a publish.
    */
@@ -1074,11 +1085,10 @@ function argsFor(entry: LiveEntry, output: OutputRuntime): string[] {
           '-shortest'
         ]),
     // Safari refuses HEVC tagged `hev1`, which is what a copy from RTMP is
-    // tagged by default, so every HLS track here is tagged `hvc1`. It is also
-    // why an H.264 publish is turned away rather than written: this tag and
-    // that codec cannot both be true.
+    // tagged by default, so an HEVC track here is tagged `hvc1`, and an H.264
+    // one `avc1`.
     '-tag:v',
-    'hvc1',
+    writerTag(entry),
     '-f',
     'hls',
     '-hls_time',
@@ -1634,11 +1644,11 @@ async function spawnPrepared(
  * `init.mp4` once written and the origin can carry that to the Space, and
  * leaving lists a part-made segment. In a codec the recording cannot hold,
  * that loses every picture already here, and it is `pollSampler` that refuses
- * the publish, up to a second in. So a publish that has not shown it is HEVC
- * writes nothing, which leaves nothing to undo if it is refused or this
+ * the publish, up to a second in. So a publish that has not shown it may be
+ * recorded (`shownAcceptable`) writes nothing, which leaves nothing to undo if it is refused or this
  * process dies first.
  *
- * In HEVC, a publish configured differently from the recording does the same
+ * In the recording's codec, a publish configured differently does the same
  * damage, and the only thing that tells them apart is its sequence headers:
  * so a writer continuing a recording waits for the publish's first picture,
  * which the picture's headers come before. That ends in `needsOwnInit`, and
@@ -1652,7 +1662,7 @@ async function spawnPrepared(
  * a writer has to know whether to add one, and a sound header can follow the
  * first picture: see `soundMayFollow`.
  *
- * An HEVC publish loses no pictures by it. Its metadata arrives within a
+ * A publish loses no pictures by it. Its metadata arrives within a
  * moment, often before the key has been looked up, and any wait ends there
  * rather than at the sampler. The server replays its headers and everything
  * since the last keyframe to a reader that joins late, which leaves out only
@@ -1665,7 +1675,7 @@ function mustKnowPublish(
   next: number
 ): boolean {
   if (entry.ingress.session == null) return false
-  if (!shownHevc(entry)) return true
+  if (!shownAcceptable(entry)) return true
   const heard = heardOf(entry)
   if (heard?.firstPictureAt != null) return soundMayFollow(entry, output, heard)
   if (next === 0 && (heard == null || soundIsKnown(heard.heard))) return false
@@ -1715,30 +1725,106 @@ function firstSilence(entry: LiveEntry): SilentSound | undefined {
   return heard == null ? undefined : silenceFor(undefined, heard.heard)
 }
 
-/** Whether the publish on a key has said what it carries, and that is HEVC. */
-function shownHevc(entry: LiveEntry): boolean {
+/**
+ * Whether the publish on a key has said what it carries, and the ingest may
+ * record it: `streamRefusal` has nothing against it.
+ */
+function shownAcceptable(entry: LiveEntry): boolean {
   const codec = entry.ingress.session?.videoCodec
   if (codec == null || codec === 0 || codec === '') return false
-  return codecRefusal(codec) == null
+  return streamRefusal(entry) == null
 }
 
 /**
- * Tells the controller of a publish, once it has shown it is HEVC.
+ * Tells the controller of a publish, once it has shown it may be recorded.
  *
  * The publish connected a moment ago, but this is when it counts: what stamps
  * the camera as published, puts it on the air and starts its video's clock.
- * A publish refused for its codec never gets here, so there is nothing to take
- * back and a camera that only ever refused reads as never published.
+ * A refused publish never gets here, so there is nothing to take back and a
+ * camera that only ever refused reads as never published.
  */
-function acceptIfHevc(entry: LiveEntry): void {
-  if (entry.ingress.accepted === true || !shownHevc(entry)) return
-  entry.ingress.accepted = true
+function acceptIfAcceptable(entry: LiveEntry): void {
+  const ingress = entry.ingress
+  if (ingress.decided === true || !shownAcceptable(entry)) return
+  ingress.decided = true
+  if (ingress.accepted === true) return
+  ingress.accepted = true
   requireConfig().onEvent({
     type: 'publishStarted',
     key: entry.key,
     liveStreamId: entry.liveStreamId
   })
   report(entry)
+}
+
+/**
+ * Refuses the publish on a key the moment `streamRefusal` has something
+ * against it, and accepts it the moment it has shown all it needs to. Until
+ * one or the other the publish stays undecided, and this is asked again: by
+ * the sampler every tick, and on every video sequence header. Whether it
+ * refused.
+ */
+function refuseIfRefused(entry: LiveEntry): boolean {
+  const ingress = entry.ingress
+  const session = ingress.session
+  if (ingress.decided === true || session == null || !ingress.publishing) {
+    return false
+  }
+  const refusal = streamRefusal(entry)
+  if (refusal == null) {
+    acceptIfAcceptable(entry)
+    return false
+  }
+  ingress.decided = true
+  const { log, onEvent } = requireConfig()
+  log(`[live:${entry.liveStreamId}] ${refusal}`)
+  onEvent({ type: 'rejected', key: entry.key, reason: refusal })
+  endSubscribers(session)
+  forceCloseIngress(entry, refusal)
+  stopOutputs(entry, refusal)
+  onEvent({
+    type: 'publishEnded',
+    key: entry.key,
+    liveStreamId: entry.liveStreamId,
+    reason: refusal
+  })
+  report(entry)
+  return true
+}
+
+/**
+ * The codec a recording began with: its `init.mp4`'s video sample entry, so
+ * that it outlives this process. Undefined while it has none, or none that can
+ * be read.
+ */
+function recordingFamily(entry: LiveEntry): CodecFamily | undefined {
+  let init: Buffer
+  try {
+    init = readFileSync(`${entry.hlsDir}/${FIRST_INIT}`)
+  } catch {
+    return undefined
+  }
+  try {
+    const video = codecsFromInit(init).find(track => track.kind === 'video')
+    return video == null ? undefined : familyOf(video.codec.slice(0, 4))
+  } catch {
+    return undefined
+  }
+}
+
+/** Why the publish on a key may not be recorded, or `null`: see `refusalOf`. */
+export function streamRefusal(entry: LiveEntry): string | null {
+  const codec = entry.ingress.session?.videoCodec
+  if (codec == null || codec === 0 || codec === '') return null
+  return refusalOf(codec, recordingFamily(entry))
+}
+
+/** The HLS writer's `-tag:v`, for the codec of the publish it writes. */
+function writerTag(entry: LiveEntry): string {
+  const codec = entry.ingress.session?.videoCodec
+  const family =
+    codec == null || codec === 0 || codec === '' ? undefined : familyOf(codec)
+  return family === 'h264' ? 'avc1' : 'hvc1'
 }
 
 /**
@@ -1778,6 +1864,9 @@ function readConfiguration(
 /** Classic FLV's number for HEVC. */
 const FLV_CODEC_HEVC = 12
 
+/** `avc1` read as a big-endian number, as Enhanced RTMP's fourcc reaches us. */
+export const FOURCC_AVC = 0x61766331
+
 /**
  * Says which packets of a classic FLV HEVC publish are its header and its
  * keyframes.
@@ -1794,6 +1883,34 @@ function classifyClassicHevc(packet: NmsPacket): void {
   else if (packet.data[0] >> 4 === 1) packet.flags = 3
 }
 
+/**
+ * Says what an Enhanced RTMP H.264 packet is.
+ *
+ * node-media-server reads the Enhanced fourccs `av01`, `vp09` and `hvc1`, and
+ * leaves an `avc1` packet as nothing it knows: no codec, and the flags of a
+ * sound header, which it would keep as the stream's. Here it gets what the
+ * server gives the others: the fourcc as its codec, flags 2 for its sequence
+ * header and 3 or 4 for a keyframe or another picture, and for coded frames
+ * that carry a composition time, that time on its presentation time.
+ */
+export function classifyEnhancedAvc(packet: NmsPacket): void {
+  const data = packet.data
+  if (data == null || data.length < 5 || (data[0] & 0x80) === 0) return
+  if (data.toString('latin1', 1, 5) !== 'avc1') return
+  const packetType = data[0] & 0x0f
+  const keyframe = ((data[0] >> 4) & 0x07) === 1
+  if (packetType === 0) {
+    packet.codec_id = FOURCC_AVC
+    packet.flags = 2
+  } else if (packetType === 1 || packetType === 3) {
+    packet.codec_id = FOURCC_AVC
+    packet.flags = keyframe ? 3 : 4
+    if (packetType === 1 && data.length >= 8) {
+      packet.pts = packet.dts + data.readIntBE(5, 3)
+    }
+  }
+}
+
 /** Keeps what a publish's packets say about it, for the writer deciding. */
 function hearPublish(watch: JumpWatch, packet: NmsPacket): void {
   const heard = watch.heard.heard
@@ -1806,6 +1923,7 @@ function hearPublish(watch: JumpWatch, packet: NmsPacket): void {
     part == null ? undefined : Buffer.from(part)
   if (packet.flags === 2) {
     heard.hevcHeader = kept(hevcHeaderOf(body)) ?? heard.hevcHeader
+    heard.avcHeader = kept(avcHeaderOf(body)) ?? heard.avcHeader
   } else if (packet.flags === 0) {
     heard.soundHeader = kept(soundHeaderOf(body)) ?? heard.soundHeader
   } else if (packet.flags === 3) {
@@ -1826,7 +1944,8 @@ function startIfKnown(entry: LiveEntry): void {
  * Hears what a publish carries from its packets, for the writer waiting on it.
  *
  * A publisher that sends no `videocodecid` says it with its first video
- * packet, which also lets the sampler refuse one that is not HEVC.
+ * packet. A sequence header is where a publish shows what it is, so the
+ * ingest decides on it there and then, if it has not yet.
  */
 function codecHeard(entry: LiveEntry, packet: NmsPacket): void {
   const session = entry.ingress.session
@@ -1837,7 +1956,8 @@ function codecHeard(entry: LiveEntry, packet: NmsPacket): void {
       session.videoCodec = packet.codec_id
     }
   }
-  acceptIfHevc(entry)
+  if (packet.flags === 2 && refuseIfRefused(entry)) return
+  acceptIfAcceptable(entry)
   startIfKnown(entry)
 }
 
@@ -2517,38 +2637,9 @@ function pollSampler(): void {
     observeReceivedBytes(ingress)
     const currentInBytes = ingress.session?.inBytes ?? 0
     if (ingress.publishing) {
-      if (ingress.codecChecked !== true && ingress.session != null) {
-        const refusal = codecRefusal(ingress.session.videoCodec)
-        if (refusal != null) {
-          ingress.codecChecked = true
-          requireConfig().log(`[live:${entry.liveStreamId}] ${refusal}`)
-          requireConfig().onEvent({
-            type: 'rejected',
-            key: entry.key,
-            reason: refusal
-          })
-          endSubscribers(ingress.session)
-          forceCloseIngress(entry, refusal)
-          stopOutputs(entry, refusal)
-          requireConfig().onEvent({
-            type: 'publishEnded',
-            key: entry.key,
-            liveStreamId: entry.liveStreamId,
-            reason: refusal
-          })
-          report(entry)
-          continue
-        }
-        // Either it is HEVC, or the metadata has not arrived yet and the next
-        // tick will look again.
-        if (
-          ingress.session.videoCodec != null &&
-          ingress.session.videoCodec !== 0
-        ) {
-          ingress.codecChecked = true
-          acceptIfHevc(entry)
-        }
-      }
+      // Refused, accepted, or not shown enough yet, and the next tick or
+      // sequence header will look again.
+      if (refuseIfRefused(entry)) continue
       startIfKnown(entry)
       const delta = currentInBytes - ingress.bytesAtLastTick
       ingress.bytesPerSecond = delta > 0 ? delta : 0
@@ -2620,23 +2711,45 @@ function pollSampler(): void {
  * never anybody else on the RTMP side.
  */
 /**
- * Why a stream is not one we can take, or `null` when it is.
+ * Why a publish in `codec` may not be recorded onto a recording that began in
+ * `recording` (undefined for one with nothing on disk yet), or `null` when it
+ * may.
  *
- * TeamStation stores HEVC and nothing else, and both legs of the split are a
- * copy — so a stream in the wrong codec cannot be salvaged downstream, and the
- * only kind thing to do is say so at once rather than record something no
- * browser here will play.
+ * TeamStation stores H.264 and HEVC, and both legs of the split are a copy, so
+ * a stream in another codec cannot be salvaged downstream, and the only kind
+ * thing to do is say so at once. A recording keeps the codec it began with:
+ * every part of it plays in the one player, and a reconnect or a camera
+ * swapped onto the same angle in the other codec is turned away rather than
+ * written beside it.
  */
-export function codecRefusal(
-  codec: number | string | undefined
+export function refusalOf(
+  codec: number | string | undefined,
+  recording: CodecFamily | undefined
 ): string | null {
   if (codec == null || codec === 0 || codec === '') return null
   const name = codecName(codec)
-  if (name === 'hvc1' || name === 'hev1') return null
-  if (name === 'avc1') {
-    return `${CODEC_REFUSAL} This stream is H.264 — change the encoder to HEVC and start it again.`
+  const family = familyOf(name)
+  if (family == null) {
+    return `${STREAM_REFUSAL_PREFIXES[0]} This stream is ${name}, which it cannot store.`
   }
-  return `${CODEC_REFUSAL} This stream is ${name}, which it cannot store.`
+  if (recording != null && recording !== family) {
+    return `${STREAM_REFUSAL_PREFIXES[1]} ${FAMILY_NAMES[recording]} and therefore must be streamed with the same codec. End the stream and start a new stream to switch codecs.`
+  }
+  return null
+}
+
+/** How a refusal names each codec. */
+const FAMILY_NAMES: Record<CodecFamily, string> = {
+  hevc: 'HEVC',
+  h264: 'H.264'
+}
+
+/** Which of the two codecs a publish or a sample entry names, if either. */
+export function familyOf(codec: number | string): CodecFamily | undefined {
+  const name = codecName(codec)
+  if (name === 'hvc1' || name === 'hev1') return 'hevc'
+  if (name === 'avc1' || name === 'avc3') return 'h264'
+  return undefined
 }
 
 /**
@@ -2817,6 +2930,7 @@ function wrapBroadcast(raw: NmsBroadcast): JumpWatch {
   }
   broadcast.broadcastMessage = packet => {
     classifyClassicHevc(packet)
+    classifyEnhancedAvc(packet)
     hearPublish(watch, packet)
     const entry = watch.entry
     if (entry == null) {
@@ -2940,7 +3054,7 @@ function accept(entry: LiveEntry, session: NmsSession): void {
   entry.ingress.session = session
   entry.ingress.bytesObserved = 0
   entry.ingress.publishing = true
-  entry.ingress.codecChecked = false
+  entry.ingress.decided = false
   entry.ingress.accepted = false
   entry.ingress.bytesAtLastTick = session.inBytes ?? 0
   entry.ingress.bytesReceived = session.inBytes ?? 0
@@ -2948,7 +3062,7 @@ function accept(entry: LiveEntry, session: NmsSession): void {
   entry.ingress.bytesPerSecond = 0
   entry.ingress.zeroByteTicks = 0
   watchForJumps(entry, session.broadcast)
-  acceptIfHevc(entry)
+  acceptIfAcceptable(entry)
   startOutputs(entry)
 }
 
@@ -3498,7 +3612,7 @@ export function forcePublishForTest(key: string, publishing: boolean): void {
   if (entry == null) return
   if (publishing && !entry.ingress.publishing) {
     entry.ingress.publishing = true
-    entry.ingress.codecChecked = false
+    entry.ingress.decided = false
     entry.ingress.accepted = true
     entry.ingress.bytesAtLastTick = 0
     entry.ingress.bytesReceived = 0

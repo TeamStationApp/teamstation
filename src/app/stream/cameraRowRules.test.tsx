@@ -54,12 +54,15 @@ const ended = { state: 'ended' }
 
 describe('a camera’s refusal', function () {
   const refused =
-    'TeamStation takes HEVC. This stream is H.264 — change the encoder to HEVC and start it again.'
+    'What happened? This stream has already been started with HEVC and therefore must be streamed with the same codec. End the stream and start a new stream to switch codecs.'
 
   it('tells the owner of an idle camera why it sits there', function () {
     expect(cameraRefusal(external({ lastError: refused }), true)).equals(
       refused
     )
+    const codec =
+      'TeamStation takes H.264 and HEVC. This stream is vp09, which it cannot store.'
+    expect(cameraRefusal(external({ lastError: codec }), true)).equals(codec)
   })
 
   it('leaves out anything else the ingest wrote', function () {

@@ -1,6 +1,6 @@
 import { expect } from 'chai'
 import type { spawn } from 'child_process'
-import { ChildProcess, execFileSync } from 'child_process'
+import { ChildProcess, execFileSync, spawnSync } from 'child_process'
 import {
   appendFileSync,
   chmodSync,
@@ -18,10 +18,18 @@ import { createServer, type Server, Socket } from 'net'
 import { tmpdir } from 'os'
 import { basename, join } from 'path'
 
-import { CODEC_REFUSAL } from '../../common/api'
+import {
+  FlvReader,
+  parseRtmpUrl,
+  RtmpPublisher
+} from '../../../e2e/rigs/streaming/rtmpPublish'
+import { STREAM_REFUSAL_PREFIXES } from '../../common/api'
 import { remuxToHls, remuxToHlsArgs, VIDEO_FILE } from '../media/ffmpeg'
 import { fileForRemux, timelineHole } from './finishVideo'
 import {
+  avcHeaderBody,
+  avcParameterSetNals,
+  configuredAvcInit,
   configuredInit,
   hevcHeaderBody,
   hevcInit,
@@ -39,24 +47,29 @@ import {
   attachSessionForTest,
   CAPTURE_LAG_MAX_MS,
   CAPTURE_LEAD_MAX_MS,
+  classifyEnhancedAvc,
   clearLive,
   clearLiveSettled,
   codecName,
-  codecRefusal,
   configureIngest,
   continuationFromCapture,
+  familyOf,
   finalSegments,
   forcePublishForTest,
+  FOURCC_AVC,
   hideKey,
   ingestBound,
+  ingestPort,
   isPublishableKey,
   keyFromSession,
   LIVE_PLAYLIST_NAME,
   type LiveEvent,
   nextSegmentNumber,
   playlistContinuation,
+  promoteWriterInit,
   publishArrivedForTest,
   publishGoneForTest,
+  refusalOf,
   reopenPlaylist,
   resetForTest,
   restartDelay,
@@ -212,7 +225,7 @@ describe('live ingest', function () {
     expect(reports.at(-1)?.status.ingress.lastReceivedAt).greaterThan(first)
   })
 
-  it('does not count a connect that never shows HEVC as received bytes', function () {
+  it('does not count a connect that never shows a codec it takes as received bytes', function () {
     setLive(KEY, spec())
     const session = {
       id: 'clock-refused',
@@ -225,7 +238,7 @@ describe('live ingest', function () {
     session.inBytes = 90
     tickSamplerForTest()
     expect(statusFor(KEY)?.ingress.lastReceivedAt).equals(null)
-    session.videoCodec = 7
+    session.videoCodec = 0x76703039
     session.inBytes = 140
     tickSamplerForTest()
     expect(statusFor(KEY)?.ingress.publishing).equals(false)
@@ -272,18 +285,131 @@ describe('live ingest', function () {
     expect(codecName('HVC1')).equals('hvc1')
   })
 
-  it('takes HEVC and turns everything else away by name', function () {
-    expect(codecRefusal(1752589105)).equals(null)
-    expect(codecRefusal(12)).equals(null)
-    expect(codecRefusal('hev1')).equals(null)
+  it('takes H.264 and HEVC and turns everything else away by name', function () {
+    for (const codec of [
+      7,
+      FOURCC_AVC,
+      'avc1',
+      'AVC3',
+      12,
+      1752589105,
+      'hvc1',
+      'hev1'
+    ]) {
+      expect(refusalOf(codec, undefined), String(codec)).equals(null)
+    }
     // Not known yet: the metadata arrives a moment after the publish starts,
     // and refusing on that would refuse everybody.
-    expect(codecRefusal(0)).equals(null)
-    expect(codecRefusal(undefined)).equals(null)
+    expect(refusalOf(0, undefined)).equals(null)
+    expect(refusalOf('', undefined)).equals(null)
+    expect(refusalOf(undefined, 'hevc')).equals(null)
 
-    expect(codecRefusal(7)).contains('H.264')
-    expect(codecRefusal(1635148593)).contains('H.264')
-    expect(codecRefusal('av01')).contains('av01')
+    expect(refusalOf(0x76703039, undefined)).equals(
+      'TeamStation takes H.264 and HEVC. This stream is vp09, which it cannot store.'
+    )
+    expect(refusalOf('av01', 'h264')).equals(
+      'TeamStation takes H.264 and HEVC. This stream is av01, which it cannot store.'
+    )
+    expect(refusalOf(2, undefined)).contains('codec 2')
+    expect(
+      refusalOf(0x76703039, undefined)?.startsWith(STREAM_REFUSAL_PREFIXES[0])
+    ).equals(true)
+  })
+
+  it('holds a recording to the codec it began with', function () {
+    const switched = (codec: string): string =>
+      `What happened? This stream has already been started with ${codec} and therefore must be streamed with the same codec. End the stream and start a new stream to switch codecs.`
+    expect(refusalOf(FOURCC_AVC, 'hevc')).equals(switched('HEVC'))
+    expect(refusalOf(7, 'hevc')).equals(switched('HEVC'))
+    expect(refusalOf(1752589105, 'h264')).equals(switched('H.264'))
+    expect(refusalOf(12, 'h264')).equals(switched('H.264'))
+    expect(refusalOf('hev1', 'hevc'), 'hev1 onto hvc1').equals(null)
+    expect(refusalOf('avc3', 'h264')).equals(null)
+    expect(switched('HEVC').startsWith(STREAM_REFUSAL_PREFIXES[1])).equals(true)
+    expect(familyOf('mp4a')).equals(undefined)
+  })
+
+  it('says what an Enhanced RTMP H.264 packet is, and leaves every other alone', function () {
+    const header = avcHeaderBody('enhanced', avcParameterSetNals(1))
+    const start = { flags: 0, dts: 40, data: header }
+    classifyEnhancedAvc(start)
+    expect(start).deep.include({ flags: 2, codec_id: FOURCC_AVC })
+
+    // A keyframe's CodedFrames, 66 ms of composition time after its fourcc.
+    const keyframe = {
+      flags: 0,
+      dts: 100,
+      data: Buffer.concat([
+        Buffer.from([0x91]),
+        Buffer.from('avc1', 'latin1'),
+        Buffer.from([0, 0, 66, 0, 0, 0, 1, 0x65])
+      ])
+    }
+    classifyEnhancedAvc(keyframe)
+    expect(keyframe).deep.include({ flags: 3, codec_id: FOURCC_AVC, pts: 166 })
+
+    const picture = {
+      flags: 0,
+      dts: 133,
+      data: Buffer.concat([
+        Buffer.from([0xa1]),
+        Buffer.from('avc1', 'latin1'),
+        Buffer.from([0xff, 0xff, 0xf0, 0, 0, 0, 1, 0x41])
+      ])
+    }
+    classifyEnhancedAvc(picture)
+    expect(picture, 'a negative composition time').deep.include({
+      flags: 4,
+      pts: 117
+    })
+
+    const framesX = {
+      flags: 0,
+      dts: 166,
+      data: Buffer.concat([
+        Buffer.from([0xa3]),
+        Buffer.from('avc1', 'latin1'),
+        Buffer.from([0, 0, 0, 1, 0x41])
+      ])
+    }
+    classifyEnhancedAvc(framesX)
+    expect(framesX).deep.include({ flags: 4, codec_id: FOURCC_AVC })
+    expect('pts' in framesX, 'CodedFramesX has no composition time').equals(
+      false
+    )
+
+    const end = {
+      flags: 0,
+      dts: 200,
+      data: Buffer.concat([Buffer.from([0x92]), Buffer.from('avc1', 'latin1')])
+    }
+    classifyEnhancedAvc(end)
+    expect(end.flags, 'SequenceEnd is not a picture').equals(0)
+
+    for (const data of [
+      hevcHeaderBody('enhanced', parameterSetNals(1)),
+      avcHeaderBody('classic', avcParameterSetNals(1)),
+      Buffer.from([0x90, 0x61]),
+      undefined
+    ]) {
+      const packet = { flags: 4, dts: 0, codec_id: 7, data }
+      classifyEnhancedAvc(packet)
+      expect(packet).deep.equals({ flags: 4, dts: 0, codec_id: 7, data })
+    }
+  })
+
+  it('takes an H.264 or an HEVC init segment for a whole one', function () {
+    const dir = mkdtempSync(join(LIVE_TMP, 'promote-'))
+    for (const init of [
+      configuredAvcInit(avcParameterSetNals(1)),
+      configuredInit(parameterSetNals(1))
+    ]) {
+      writeFileSync(join(dir, WRITER_INIT_NAME), init)
+      expect(promoteWriterInit(dir)).equals(true)
+      expect(readFileSync(join(dir, 'init.mp4')).equals(init)).equals(true)
+    }
+    writeFileSync(join(dir, WRITER_INIT_NAME), Buffer.from('not a box'))
+    expect(promoteWriterInit(dir)).equals(false)
   })
 
   it('keeps the stream key out of anything it says', function () {
@@ -534,6 +660,15 @@ interface Broadcast {
   postPublish: (session: unknown) => string | null
   donePublish: (session: unknown) => void
   subscribers: Map<string, { close?: () => void }>
+  broadcastMessage: (packet: {
+    flags: number
+    dts: number
+    pts?: number
+    codec_id?: number
+    codec_type?: number
+    size?: number
+    data?: Buffer
+  }) => void
 }
 interface NmsContext {
   eventEmitter: {
@@ -771,15 +906,19 @@ describe('a publisher replaced by its own reconnect', function () {
     )
   })
 
+  const VP9 = 0x76703039
+  const refusals = (): LiveEvent[] =>
+    events.filter(
+      event =>
+        event.type === 'publishEnded' &&
+        STREAM_REFUSAL_PREFIXES.some(prefix => event.reason.startsWith(prefix))
+    )
+  const started = (): number =>
+    events.filter(event => event.type === 'publishStarted').length
+
   it('looks at the codec of every publish on a key, not only its first', function () {
     const withCodec = (id: string, videoCodec: number): TestSession =>
       Object.assign(publisher(id), { videoCodec })
-    const refusals = (): LiveEvent[] =>
-      events.filter(
-        event =>
-          event.type === 'publishEnded' &&
-          event.reason.startsWith(CODEC_REFUSAL)
-      )
 
     const hevc = withCodec('hevc', 12)
     push(hevc)
@@ -787,14 +926,125 @@ describe('a publisher replaced by its own reconnect', function () {
     expect(refusals(), 'HEVC goes through').deep.equals([])
     broadcast.donePublish(hevc)
 
-    push(withCodec('first refused', 7))
+    push(withCodec('first refused', VP9))
     tickSamplerForTest()
-    expect(refusals().length, 'H.264 after HEVC').equals(1)
+    expect(refusals().length, 'VP9 after HEVC').equals(1)
     expect(statusFor(KEY)?.ingress.publishing).equals(false)
 
-    push(withCodec('second refused', 7))
+    push(withCodec('second refused', VP9))
     tickSamplerForTest()
-    expect(refusals().length, 'H.264 after H.264').equals(2)
+    expect(refusals().length, 'VP9 after VP9').equals(2)
+
+    const h264 = withCodec('h264', 7)
+    push(h264)
+    tickSamplerForTest()
+    expect(refusals().length, 'H.264 with nothing recorded yet').equals(2)
+    expect(statusFor(KEY)?.ingress.publishing).equals(true)
+  })
+
+  it('turns a publish in the other codec away from a recording, whatever spells it', function () {
+    const dir = spec().hlsDir
+    mkdirSync(dir, { recursive: true })
+    try {
+      writeFileSync(join(dir, 'init.mp4'), configuredInit(parameterSetNals(1)))
+      const avc = Object.assign(publisher('h264 onto HEVC'), {
+        videoCodec: FOURCC_AVC
+      })
+      push(avc)
+      tickSamplerForTest()
+      expect(
+        refusals().map(event => event.type === 'publishEnded' && event.reason)
+      ).deep.equals([
+        'What happened? This stream has already been started with HEVC and therefore must be streamed with the same codec. End the stream and start a new stream to switch codecs.'
+      ])
+      expect(statusFor(KEY)?.ingress.publishing).equals(false)
+
+      writeFileSync(
+        join(dir, 'init.mp4'),
+        configuredAvcInit(avcParameterSetNals(1))
+      )
+      push(Object.assign(publisher('HEVC onto H.264'), { videoCodec: 'hev1' }))
+      tickSamplerForTest()
+      expect(refusals()).length(2)
+      const second = refusals()[1]
+      expect(second.type === 'publishEnded' ? second.reason : '').contains(
+        'started with H.264'
+      )
+
+      const same = Object.assign(publisher('H.264 again'), { videoCodec: 7 })
+      push(same)
+      tickSamplerForTest()
+      expect(refusals(), 'the same codec').length(2)
+      expect(started()).equals(1)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  /** An Enhanced RTMP H.264 sequence header as node-media-server parsed it. */
+  const enhancedAvcHeader = (): Parameters<
+    Broadcast['broadcastMessage']
+  >[0] => {
+    const data = avcHeaderBody('enhanced', avcParameterSetNals(1))
+    return {
+      flags: 0,
+      dts: 0,
+      pts: 0,
+      codec_id: 0,
+      codec_type: 9,
+      size: data.length,
+      data
+    }
+  }
+
+  it('decides at the sequence header, not a tick later, for a publish that sent no metadata', function () {
+    const dir = spec().hlsDir
+    mkdirSync(dir, { recursive: true })
+    try {
+      writeFileSync(join(dir, 'init.mp4'), configuredInit(parameterSetNals(1)))
+      const avc = Object.assign(publisher('enhanced H.264'), {
+        videoCodec: undefined
+      })
+      push(avc)
+      expect(started(), 'nothing shown yet').equals(0)
+      broadcast.broadcastMessage(enhancedAvcHeader())
+      expect(avc.videoCodec, 'the fourcc it read').equals(FOURCC_AVC)
+      expect(refusals(), 'with no tick').length(1)
+      expect(avc.closed).equals(1)
+
+      rmSync(join(dir, 'init.mp4'))
+      const fresh = Object.assign(publisher('a first H.264 publish'), {
+        videoCodec: undefined
+      })
+      push(fresh)
+      broadcast.broadcastMessage(enhancedAvcHeader())
+      expect(started(), 'accepted at its header').equals(1)
+      expect(refusals()).length(1)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('looks again each tick at a codec that metadata named before any header', function () {
+    const dir = spec().hlsDir
+    mkdirSync(dir, { recursive: true })
+    try {
+      const made = Object.assign(publisher('metadata first'), {
+        videoCodec: undefined as number | undefined
+      })
+      push(made)
+      tickSamplerForTest()
+      expect(started(), 'undecided').equals(0)
+      expect(refusals(), 'undecided').length(0)
+      // Metadata names H.264, while another camera's HEVC reaches the disk.
+      writeFileSync(join(dir, 'init.mp4'), configuredInit(parameterSetNals(1)))
+      made.videoCodec = 7
+      tickSamplerForTest()
+      expect(refusals()).length(1)
+      expect(started()).equals(0)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it('answers each lookup the way the controller answered it', async function () {
@@ -3004,4 +3254,175 @@ describe('the RTMP listener this process holds', function () {
     expect(rtmpBound()).equals(false)
     expect(await ingestBound(50)).equals(false)
   })
+})
+
+describe('an H.264 publish through the real ingest (I2)', function () {
+  this.timeout(90_000)
+  const ffmpeg = process.env.TS_FFMPEG ?? 'ffmpeg'
+  let dir: string
+  let started: string[]
+
+  beforeEach(async function () {
+    dir = mkdtempSync(join(LIVE_TMP, 'h264-'))
+    started = []
+    configureIngest({
+      ffmpegPath: ffmpeg,
+      bindHost: '127.0.0.1',
+      port: 0,
+      app: 'live',
+      segmentSeconds: 1,
+      log: () => undefined,
+      onEvent: event => {
+        if (event.type === 'publishStarted') started.push(event.liveStreamId)
+        if (event.type === 'rejected') started.push(`rejected: ${event.reason}`)
+      }
+    })
+    expect(startIngest()).equals(true)
+    expect(await ingestBound(5000)).equals(true)
+    setLive(KEY, { liveStreamId: 'liv_h264', hlsDir: dir, destinations: [] })
+  })
+
+  afterEach(async function () {
+    await clearLiveSettled(KEY, 'the test ended')
+    stopIngest()
+    resetForTest()
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  /** Four seconds of 720p H.264 and AAC, as FFmpeg's own flv muxer writes it. */
+  const encoder = (target: string): string[] => [
+    '-hide_banner',
+    '-loglevel',
+    'error',
+    '-re',
+    '-f',
+    'lavfi',
+    '-i',
+    'testsrc2=size=1280x720:rate=15:duration=4',
+    '-f',
+    'lavfi',
+    '-i',
+    'sine=duration=4',
+    '-c:v',
+    'libx264',
+    '-preset',
+    'ultrafast',
+    '-bf',
+    '0',
+    '-g',
+    '15',
+    '-c:a',
+    'aac',
+    '-f',
+    'flv',
+    target
+  ]
+
+  const url = (): string =>
+    `rtmp://127.0.0.1:${String(ingestPort())}/live/${KEY}`
+
+  /** Runs FFmpeg without blocking: the ingest it publishes to is this process. */
+  async function run(args: string[]): Promise<void> {
+    const { execFile } = await import('child_process')
+    const { promisify } = await import('util')
+    await promisify(execFile)(ffmpeg, args)
+  }
+
+  async function publishClassic(): Promise<void> {
+    await run(encoder(url()))
+  }
+
+  async function publishEnhanced(): Promise<void> {
+    const target = parseRtmpUrl(url())
+    const socket = new Socket()
+    await new Promise<void>(resolve => {
+      socket.connect(target.port, target.host, resolve)
+    })
+    const publisher = new RtmpPublisher(socket, target, { flv: 'enhanced' })
+    await publisher.open()
+    const flv = execFileSync(ffmpeg, encoder('pipe:1'), {
+      maxBuffer: 64 * 1024 * 1024
+    })
+    const tags = new FlvReader().push(flv)
+    const begun = Date.now()
+    for (const tag of tags) {
+      const due = begun + tag.timestamp - Date.now()
+      if (due > 0) await new Promise(resolve => setTimeout(resolve, due))
+      publisher.sendTag(tag)
+    }
+    publisher.close()
+  }
+
+  const probe = (path: string): string[] =>
+    execFileSync(
+      'ffprobe',
+      [
+        '-v',
+        'error',
+        '-select_streams',
+        'v',
+        '-show_entries',
+        'stream=codec_name,codec_tag_string',
+        '-of',
+        'csv=p=0',
+        path
+      ],
+      { encoding: 'utf8' }
+    )
+      .split('\n')
+      .filter(Boolean)
+
+  for (const [form, publish] of [
+    ['classic (codec id 7)', publishClassic],
+    ['Enhanced RTMP (fourcc avc1)', publishEnhanced]
+  ] as const) {
+    it(`records ${form} as avc1, and plays it`, async function () {
+      await publish()
+      for (let waited = 0; waited < 10_000; waited += 100) {
+        if (
+          existsSync(join(dir, 'init.mp4')) &&
+          readFileSync(join(dir, LIVE_PLAYLIST_NAME), 'utf8').includes('.m4s')
+        )
+          break
+        await new Promise(resolve => setTimeout(resolve, 100))
+      }
+      await clearLiveSettled(KEY, 'the publish ended')
+      expect(started).deep.equals(['liv_h264'])
+      expect(probe(join(dir, 'init.mp4'))).deep.equals(['h264,avc1'])
+      expect(new Set(probe(join(dir, LIVE_PLAYLIST_NAME)))).deep.equals(
+        new Set(['h264,avc1'])
+      )
+      // Every picture decodes, read as the finished playlist it will be: the
+      // live one has no end, and FFmpeg would wait on it for ever.
+      const ended = join(dir, 'ended.m3u8')
+      writeFileSync(
+        ended,
+        `${readFileSync(join(dir, LIVE_PLAYLIST_NAME), 'utf8')}#EXT-X-ENDLIST\n`
+      )
+      const decoded = spawnSync(
+        ffmpeg,
+        ['-v', 'error', '-i', ended, '-f', 'null', '-'],
+        { encoding: 'utf8' }
+      )
+      expect(decoded.status).equals(0)
+      expect(decoded.stderr).equals('')
+      const frames = execFileSync(
+        'ffprobe',
+        [
+          '-v',
+          'error',
+          '-count_frames',
+          '-select_streams',
+          'v',
+          '-show_entries',
+          'stream=nb_read_frames',
+          '-of',
+          'csv=p=0',
+          ended
+        ],
+        { encoding: 'utf8' }
+      )
+      expect(Number(frames.trim().split('\n')[0])).greaterThan(30)
+    })
+  }
 })

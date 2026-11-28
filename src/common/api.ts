@@ -2511,8 +2511,24 @@ export type UserMatch = Omit<
   'recentVideoTeams'
 > & { recentVideoTeams?: Array<{ id: string; name: string }> }
 
-/** How the ingest's `lastError` begins when it refused a camera's codec. */
-export const CODEC_REFUSAL = 'TeamStation takes HEVC.'
+/**
+ * How each of the ingest's refusals begins, as its `lastError` reads: a codec
+ * it cannot store, a codec other than the one the recording began with, and a
+ * picture outside 720p–1080p.
+ */
+export const STREAM_REFUSAL_PREFIXES = [
+  'TeamStation takes H.264 and HEVC.',
+  'What happened? This stream has already been started with',
+  'TeamStation takes 720p to 1080p.'
+] as const
+
+/** Whether a `lastError` is one of the ingest's refusals. */
+export function isStreamRefusal(lastError: string | null | undefined): boolean {
+  return (
+    lastError != null &&
+    STREAM_REFUSAL_PREFIXES.some(prefix => lastError.startsWith(prefix))
+  )
+}
 
 /**
  * A live stream's own state, as the ingest last reported it.

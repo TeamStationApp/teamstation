@@ -13,7 +13,7 @@ import { join } from 'node:path'
 import { expect } from 'chai'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
-import { CODEC_REFUSAL } from '../../common/api'
+import { STREAM_REFUSAL_PREFIXES } from '../../common/api'
 import {
   hevcHeaderBody,
   hevcSegment,
@@ -43,6 +43,8 @@ const LIVE_TMP = mkdtempSync(join(tmpdir(), 'ts-live-test-'))
 
 const KEY = 'ts_codecholdkeycodecholdkey'
 const FOURCC_HEVC = 0x68766331
+const FOURCC_AVC = 0x61766331
+const FOURCC_VP9 = 0x76703039
 const ROOT = join(LIVE_TMP, 'codec-hold')
 const DIR = join(ROOT, 'recording')
 const FAKE = join(ROOT, 'ffmpeg.sh')
@@ -142,7 +144,8 @@ describe('a publish on a key that already holds a recording', function () {
   const refusals = (): LiveEvent[] =>
     events.filter(
       event =>
-        event.type === 'publishEnded' && event.reason.startsWith(CODEC_REFUSAL)
+        event.type === 'publishEnded' &&
+        STREAM_REFUSAL_PREFIXES.some(prefix => event.reason.startsWith(prefix))
     )
   /** The streams the controller was told have started publishing. */
   const heard = (): string[] =>
@@ -231,7 +234,7 @@ describe('a publish on a key that already holds a recording', function () {
     rmSync(ROOT, { recursive: true, force: true })
   })
 
-  it('leaves every byte of it alone when the publish is H.264', async function () {
+  it('leaves every byte of an HEVC recording alone when the publish is H.264', async function () {
     firstPublishOnDisk(DIR, START_MS)
     const before = recording()
     live(START_MS)
@@ -276,6 +279,34 @@ describe('a publish on a key that already holds a recording', function () {
     expect(recording()).deep.equals(before)
   })
 
+  it('takes an H.264 publish onto a recording that has nothing yet, and says it started', async function () {
+    live(START_MS)
+    const made = session('camera', FOURCC_AVC)
+    publishArrivedForTest(made)
+    showSound(made)
+    await until(() => spawned().length === 1)
+    tickSamplerForTest()
+    expect(refusals()).length(0)
+    expect(heard()).deep.equals(['liv_hold'])
+    const args = spawned()[0]
+    expect(args[args.indexOf('-tag:v') + 1]).equals('avc1')
+  })
+
+  it('still refuses VP9, and writes nothing for it', async function () {
+    live(START_MS)
+    publishArrivedForTest(session('wrong camera', FOURCC_VP9))
+    await sleep(100)
+    tickSamplerForTest()
+    expect(spawned()).length(0)
+    expect(heard()).length(0)
+    const refused = refusals()
+    expect(refused).length(1)
+    expect(refused[0].type === 'publishEnded' && refused[0].reason).equals(
+      'TeamStation takes H.264 and HEVC. This stream is vp09, which it cannot store.'
+    )
+    expect(readdirSync(DIR)).deep.equals([])
+  })
+
   it('refuses H.264 from a publisher that sends no metadata', async function () {
     firstPublishOnDisk(DIR, START_MS)
     const before = recording()
@@ -307,7 +338,7 @@ describe('a publish on a key that already holds a recording', function () {
     // The wrong camera arrives while the writer flushes. It finishes first,
     // and the sampler's refusal lands after: the start that was owed then
     // must not run.
-    publishArrivedForTest(session('wrong camera', 7))
+    publishArrivedForTest(session('wrong camera', FOURCC_VP9))
     writer?.kill('SIGKILL')
     await until(() => writerForTest(KEY) == null)
     await sleep(100)
@@ -346,7 +377,7 @@ describe('a publish on a key that already holds a recording', function () {
     for (let tick = 0; tick < 3; tick += 1) tickSamplerForTest()
     const before = recording()
 
-    publishArrivedForTest(session('wrong camera', 7))
+    publishArrivedForTest(session('wrong camera', FOURCC_VP9))
     expect(logs.join('\n')).contains('replaces it')
     writer?.kill('SIGKILL')
     await until(() => writerForTest(KEY) == null)
@@ -437,7 +468,7 @@ describe('a publish on a key that already holds a recording', function () {
 
   it('protects a video that lost its publish before a segment closed', async function () {
     live(START_MS)
-    publishArrivedForTest(session('wrong camera', 7))
+    publishArrivedForTest(session('wrong camera', FOURCC_VP9))
     await sleep(100)
     tickSamplerForTest()
     expect(spawned()).length(0)
@@ -572,9 +603,9 @@ describe('a publish on a key that already holds a recording', function () {
         event => event.type === 'status' && event.status.ingress.publishing
       )
 
-    it('says nothing of a first H.264 publish and leaves its folder empty', async function () {
+    it('says nothing of a first VP9 publish and leaves its folder empty', async function () {
       live()
-      const made = session('wrong camera', 7)
+      const made = session('wrong camera', FOURCC_VP9)
       publishArrivedForTest(made)
       made.inBytes = 500_000
       await sleep(100)
@@ -604,9 +635,9 @@ describe('a publish on a key that already holds a recording', function () {
       expect(onTheAir(), 'accepted, it is heard of').length.above(0)
     })
 
-    it('says nothing of an H.264 publish that leaves before the sampler looks', async function () {
+    it('says nothing of a VP9 publish that leaves before the sampler looks', async function () {
       live()
-      const made = session('wrong camera', 7)
+      const made = session('wrong camera', FOURCC_VP9)
       publishArrivedForTest(made)
       await sleep(50)
       publishGoneForTest(made)
@@ -617,22 +648,22 @@ describe('a publish on a key that already holds a recording', function () {
       expect(spawned()).length(0)
     })
 
-    it('says nothing of H.264 seen only in its packets', async function () {
+    it('says nothing of VP9 seen only in its packets', async function () {
       live()
       const made = session('wrong camera')
       publishArrivedForTest(made)
-      send(made, { flags: 2, dts: 0, codec_id: 7 })
-      send(made, { flags: 3, dts: 0, codec_id: 7 })
+      send(made, { flags: 2, dts: 0, codec_id: FOURCC_VP9 })
+      send(made, { flags: 3, dts: 0, codec_id: FOURCC_VP9 })
       tickSamplerForTest()
 
       expect(heard()).deep.equals([])
       expect(refusals()).length(1)
     })
 
-    it('hears of each retry only when one is HEVC, and of that one once', async function () {
+    it('hears of each retry only when one may be recorded, and of that one once', async function () {
       live()
       for (const round of [1, 2, 3]) {
-        publishArrivedForTest(session(`retry ${round}`, 7))
+        publishArrivedForTest(session(`retry ${round}`, FOURCC_VP9))
         await sleep(20)
         tickSamplerForTest()
       }
@@ -660,7 +691,7 @@ describe('a publish on a key that already holds a recording', function () {
       writer?.kill('SIGKILL')
       await until(() => writerForTest(KEY) == null)
 
-      publishArrivedForTest(session('wrong camera', 7))
+      publishArrivedForTest(session('wrong camera', FOURCC_VP9))
       await sleep(50)
       tickSamplerForTest()
 

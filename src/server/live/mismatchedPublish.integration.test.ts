@@ -15,7 +15,11 @@ import { join } from 'node:path'
 import { expect } from 'chai'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
+import { STREAM_REFUSAL_PREFIXES } from '../../common/api'
 import {
+  avcHeaderBody,
+  avcParameterSetNals,
+  configuredAvcInit,
   configuredInit,
   hevcHeaderBody,
   hevcSegment,
@@ -299,6 +303,91 @@ describe('a publish configured differently from the recording', function () {
 
       const [, ...args] = spawned()[0]
       expectContinuing(args, 3)
+    })
+  }
+
+  /** An H.264 publisher's opening, as node-media-server hands it on. */
+  const showAvc = (
+    made: TestSession,
+    camera: number,
+    kind: 'classic' | 'enhanced'
+  ): void => {
+    // Classic it reads itself; Enhanced `avc1` it leaves unread.
+    made.broadcast?.broadcastMessage?.({
+      flags: kind === 'classic' ? 2 : 0,
+      dts: 0,
+      codec_id: kind === 'classic' ? 7 : 0,
+      data: avcHeaderBody(kind, avcParameterSetNals(camera))
+    })
+    made.broadcast?.broadcastMessage?.({
+      flags: kind === 'classic' ? 3 : 0,
+      dts: 0,
+      codec_id: kind === 'classic' ? 7 : 0,
+      data:
+        kind === 'classic'
+          ? Buffer.from([0x17, 1, 0, 0, 0, 0, 0, 0, 1, 0x65])
+          : Buffer.concat([
+              Buffer.from([0x91]),
+              Buffer.from('avc1', 'latin1'),
+              Buffer.from([0, 0, 0, 0, 0, 0, 1, 0x65])
+            ])
+    })
+  }
+
+  /** {@link firstPublishOnDisk}, its init segment H.264's. */
+  const firstH264OnDisk = (): void => {
+    firstPublishOnDisk(DIR, START_MS)
+    writeFileSync(
+      join(DIR, 'init.mp4'),
+      configuredAvcInit(avcParameterSetNals(1))
+    )
+  }
+
+  for (const kind of ['classic', 'enhanced'] as const) {
+    it(`refuses a ${kind} H.264 reconnect onto an HEVC recording, and leaves it alone (I3)`, async function () {
+      firstPublishOnDisk(DIR, START_MS)
+      const before = recording()
+      live()
+      const made = session('camera swapped to H.264')
+      publishArrivedForTest(made)
+      showAvc(made, 1, kind)
+      await sleep(100)
+      tickSamplerForTest()
+
+      const ended = events.flatMap(event =>
+        event.type === 'publishEnded' ? [event.reason] : []
+      )
+      expect(ended).deep.equals([
+        `${STREAM_REFUSAL_PREFIXES[1]} HEVC and therefore must be streamed with the same codec. End the stream and start a new stream to switch codecs.`
+      ])
+      expect(events.map(event => event.type)).not.contains('publishStarted')
+      expect(spawned()).length(0)
+      expect(recording()).deep.equals(before)
+    })
+
+    it(`keeps a same-configured ${kind} H.264 publish on an H.264 recording's own init segment`, async function () {
+      firstH264OnDisk()
+      live()
+      const made = session('camera')
+      publishArrivedForTest(made)
+      showAvc(made, 1, kind)
+      await until(() => spawned().length === 1)
+      expectContinuing(spawned()[0].slice(1), 3)
+      expect(optionOf(spawned()[0], '-tag:v')).equals('avc1')
+    })
+
+    it(`gives an H.264 publish of another size a part of its own, ${kind}`, async function () {
+      firstH264OnDisk()
+      const before = recording()
+      live()
+      const made = session('camera at 1080p')
+      publishArrivedForTest(made)
+      showAvc(made, 2, kind)
+      await until(() => spawned().length === 1)
+      const [, ...args] = spawned()[0]
+      expect(optionOf(args, '-hls_fmp4_init_filename')).equals('init000003.mp4')
+      expect(optionOf(args, '-tag:v')).equals('avc1')
+      expect(recording()).deep.equals(before)
     })
   }
 

@@ -766,8 +766,15 @@ export function boxesIn(data: Buffer, start: number, end: number): Box[] {
   return boxes
 }
 
-/** The chain of boxes from `moov` down to the video track's `hvcC`. */
-export function hvcCPath(init: Buffer): Box[] | undefined {
+/**
+ * The chain of boxes from `moov` down to the video track's decoder
+ * configuration: the first `stsd` entry of one of `entries`, then its `config`.
+ */
+function sampleConfigPath(
+  init: Buffer,
+  entries: readonly string[],
+  config: string
+): Box[] | undefined {
   const moov = boxesIn(init, 0, init.length).find(box => box.type === 'moov')
   if (moov == null) return undefined
   for (const trak of boxesIn(init, moov.start + 8, moov.end)) {
@@ -785,18 +792,28 @@ export function hvcCPath(init: Buffer): Box[] | undefined {
       parent = child
     }
     if (parent.type !== 'stsd') continue
-    const entry = boxesIn(init, parent.start + 16, parent.end).find(
-      box => box.type === 'hvc1' || box.type === 'hev1'
+    const entry = boxesIn(init, parent.start + 16, parent.end).find(box =>
+      entries.includes(box.type)
     )
     if (entry == null) continue
     // A visual sample entry's own fields come before its child boxes.
-    const hvcC = boxesIn(init, entry.start + 8 + 78, entry.end).find(
-      box => box.type === 'hvcC'
+    const found = boxesIn(init, entry.start + 8 + 78, entry.end).find(
+      box => box.type === config
     )
-    if (hvcC == null) continue
-    return [...path, entry, hvcC]
+    if (found == null) continue
+    return [...path, entry, found]
   }
   return undefined
+}
+
+/** The chain of boxes from `moov` down to the video track's `hvcC`. */
+export function hvcCPath(init: Buffer): Box[] | undefined {
+  return sampleConfigPath(init, ['hvc1', 'hev1'], 'hvcC')
+}
+
+/** The chain of boxes from `moov` down to the video track's `avcC`. */
+export function avcCPath(init: Buffer): Box[] | undefined {
+  return sampleConfigPath(init, ['avc1', 'avc3'], 'avcC')
 }
 
 /** The parameter sets in an `hvcC`, and its NAL length size. */

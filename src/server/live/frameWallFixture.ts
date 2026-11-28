@@ -6,7 +6,7 @@
  */
 
 import { encodeWallClockSei } from '../../common/wallClockSei'
-import { hvcCWith, initWithHvcC } from './holeFiller'
+import { hvcCPath, hvcCWith, initWithHvcC } from './holeFiller'
 
 export function box(type: string, payload: Buffer): Buffer {
   const head = Buffer.alloc(8)
@@ -215,6 +215,69 @@ export function hevcHeaderBody(
       ? Buffer.from([0x1c, 0, 0, 0, 0])
       : Buffer.concat([Buffer.from([0x90]), Buffer.from('hvc1', 'latin1')])
   return Buffer.concat([head, hvcCRecord(nals)])
+}
+
+/** H.264 parameter sets a publisher might send: an SPS and a PPS, `at` apart. */
+export function avcParameterSetNals(at: number): Buffer[] {
+  return [
+    Buffer.from([0x67, 0x64, 0x00, 0x28, at, 0xaa]),
+    Buffer.from([0x68, at, 0xbb])
+  ]
+}
+
+/** An AVCDecoderConfigurationRecord holding `nals`: its SPS, then its PPS. */
+export function avcCRecord(nals: Buffer[]): Buffer {
+  const sps = nals.filter(nal => (nal[0] & 0x1f) === 7)
+  const pps = nals.filter(nal => (nal[0] & 0x1f) === 8)
+  const listed = (units: Buffer[]): Buffer[] =>
+    units.flatMap(unit => {
+      const length = Buffer.alloc(2)
+      length.writeUInt16BE(unit.length)
+      return [length, unit]
+    })
+  const first = sps[0] ?? Buffer.from([0x67, 0x64, 0, 0x28])
+  return Buffer.concat([
+    Buffer.from([1, first[1], first[2], first[3], 0xff, 0xe0 | sps.length]),
+    ...listed(sps),
+    Buffer.from([pps.length]),
+    ...listed(pps)
+  ])
+}
+
+/**
+ * {@link configuredInit}, but an H.264 track: an `avc1` sample entry whose
+ * `avcC` holds `nals`.
+ */
+export function configuredAvcInit(nals: Buffer[], sound?: Buffer): Buffer {
+  const hevc = configuredInit(parameterSetNals(0), sound)
+  const path = hvcCPath(hevc)
+  if (path == null) throw new Error('no hvcC to replace')
+  const hvcC = path[path.length - 1]
+  const entry = path[path.length - 2]
+  const record = avcCRecord(nals)
+  const grow = record.length - (hvcC.end - hvcC.start - hvcC.header)
+  const out = Buffer.concat([
+    hevc.subarray(0, hvcC.start),
+    box('avcC', record),
+    hevc.subarray(hvcC.end)
+  ])
+  for (const parent of path.slice(0, -1)) {
+    out.writeUInt32BE(parent.end - parent.start + grow, parent.start)
+  }
+  out.write('avc1', entry.start + 4, 'latin1')
+  return out
+}
+
+/** An H.264 sequence header's FLV body, classic (codec 7) or Enhanced RTMP. */
+export function avcHeaderBody(
+  kind: 'classic' | 'enhanced',
+  nals: Buffer[]
+): Buffer {
+  const head =
+    kind === 'classic'
+      ? Buffer.from([0x17, 0, 0, 0, 0])
+      : Buffer.concat([Buffer.from([0x90]), Buffer.from('avc1', 'latin1')])
+  return Buffer.concat([head, avcCRecord(nals)])
 }
 
 /** An AAC sequence header's FLV body. */

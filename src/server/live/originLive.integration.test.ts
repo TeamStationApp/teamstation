@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { expect } from 'chai'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
-import { CODEC_REFUSAL } from '../../common/api'
+import { STREAM_REFUSAL_PREFIXES } from '../../common/api'
 import {
   drainLiveController,
   drainPublishForTest,
@@ -267,7 +267,8 @@ describe('a live origin shared by API nodes', function () {
       streamApp: 'live',
       streamName: f.stream.key,
       streamPath: `/live/${f.stream.key}`,
-      videoCodec: 7
+      // The recording `stage` made is H.264: an HEVC camera is refused it.
+      videoCodec: 12
     })
     await f.begin()
     await new Promise(resolve => setTimeout(resolve, 300))
@@ -275,7 +276,8 @@ describe('a live origin shared by API nodes', function () {
     tickSamplerForTest()
     const refusal = events.find(
       event =>
-        event.type === 'publishEnded' && event.reason.startsWith(CODEC_REFUSAL)
+        event.type === 'publishEnded' &&
+        event.reason.startsWith(STREAM_REFUSAL_PREFIXES[1])
     )
     expect(refusal, 'the publish was refused').not.equals(undefined)
     await handleLiveEventForTest(refusal!, f.options)

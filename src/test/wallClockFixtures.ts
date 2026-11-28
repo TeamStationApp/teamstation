@@ -110,7 +110,13 @@ export async function stampFile(
 export async function writeLive(
   input: string,
   dir: string,
-  options: { fromSec?: number; seconds?: number; startNumber?: number }
+  options: {
+    fromSec?: number
+    seconds?: number
+    startNumber?: number
+    /** The track's tag: `hvc1` unless the input is H.264. */
+    tag?: 'hvc1' | 'avc1'
+  }
 ): Promise<void> {
   const flags = ['independent_segments', 'temp_file']
   if ((options.startNumber ?? 0) > 0) flags.push('append_list', 'discont_start')
@@ -127,7 +133,7 @@ export async function writeLive(
       '-c',
       'copy',
       '-tag:v',
-      'hvc1',
+      options.tag ?? 'hvc1',
       '-f',
       'hls',
       '-hls_time',

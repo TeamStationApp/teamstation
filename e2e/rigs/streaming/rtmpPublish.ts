@@ -297,6 +297,42 @@ export class FlvReader {
   }
 }
 
+/**
+ * A classic FLV H.264 video tag (codec id 7) as Enhanced RTMP spells it: the
+ * extended bit, the frame type and a packet type in the first byte, then the
+ * fourcc `avc1`. A sequence header becomes `PacketTypeSequenceStart` and its
+ * AVCDecoderConfigurationRecord, a coded frame `CodedFrames` with the same
+ * composition time and NAL units, and an end of sequence `SequenceEnd`.
+ * FFmpeg's flv muxer writes H.264 only the classic way. Any other tag is
+ * answered as it is.
+ */
+export function enhanceAvcTag(tag: FlvTag): FlvTag {
+  const data = tag.data
+  if (tag.type !== MSG.video || data.length < 5 || (data[0] & 0x0f) !== 7) {
+    return tag
+  }
+  const frameType = (data[0] >> 4) & 0x07
+  const packetType = data[1]
+  if (packetType > 2) return tag
+  const head = Buffer.from([0x80 | (frameType << 4) | packetType])
+  const fourCc = Buffer.from('avc1', 'latin1')
+  const body =
+    packetType === 0
+      ? [data.subarray(5)]
+      : packetType === 1
+        ? [data.subarray(2, 5), data.subarray(5)]
+        : []
+  return { ...tag, data: Buffer.concat([head, fourCc, ...body]) }
+}
+
+/** How H.264 goes out: as FFmpeg wrote it, or as Enhanced RTMP (`enhanceAvcTag`). */
+export type FlvForm = 'classic' | 'enhanced'
+
+export interface PublisherOptions {
+  /** H.264's form on the wire. Classic unless said. HEVC is sent as written. */
+  flv?: FlvForm
+}
+
 // The publisher --------------------------------------------------------------------
 
 export interface RtmpSocket {
@@ -352,7 +388,8 @@ export class RtmpPublisher {
 
   constructor(
     private readonly socket: RtmpSocket,
-    private readonly target: RtmpTarget
+    private readonly target: RtmpTarget,
+    private readonly options: PublisherOptions = {}
   ) {
     socket.on('data', (data: Buffer) => {
       this.onData(data)
@@ -507,7 +544,8 @@ export class RtmpPublisher {
           type: 'nonprivate',
           flashVer: 'FMLE/3.0 (compatible; TeamStation soak)',
           tcUrl,
-          fourCcList: ['hvc1']
+          fourCcList:
+            this.options.flv === 'enhanced' ? ['hvc1', 'avc1'] : ['hvc1']
         }
       ])
       this.command(['releaseStream', 2, null, key])
@@ -544,10 +582,11 @@ export class RtmpPublisher {
   sendTag(tag: FlvTag): void {
     if (this.closed) throw new Error('the RTMP connection is closed')
     const csid = tag.type === MSG.audio ? 4 : tag.type === MSG.video ? 6 : 5
+    const sent = this.options.flv === 'enhanced' ? enhanceAvcTag(tag) : tag
     const payload =
-      tag.type === MSG.data
-        ? Buffer.concat([amfEncode('@setDataFrame'), tag.data])
-        : tag.data
+      sent.type === MSG.data
+        ? Buffer.concat([amfEncode('@setDataFrame'), sent.data])
+        : sent.data
     this.send({
       csid,
       type: tag.type,

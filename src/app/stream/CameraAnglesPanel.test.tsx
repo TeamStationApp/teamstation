@@ -660,7 +660,8 @@ describe('the cameras on a game, on a phone', function () {
 
   it('says on an own idle row why the ingest refused its camera', async function () {
     const fake = fakeClient()
-    const refused = 'TeamStation takes HEVC. This stream is H.264.'
+    const refused =
+      'TeamStation takes H.264 and HEVC. This stream is vp09, which it cannot store.'
     fake.mine = [
       stream({
         id: 'liv_1',

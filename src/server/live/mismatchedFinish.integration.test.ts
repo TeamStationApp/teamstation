@@ -108,7 +108,8 @@ async function writeOwn(
   input: string,
   dir: string,
   initName: string,
-  startNumber: number
+  startNumber: number,
+  tag: 'hvc1' | 'avc1' = 'hvc1'
 ): Promise<void> {
   await run(FFMPEG, [
     '-hide_banner',
@@ -119,7 +120,7 @@ async function writeOwn(
     '-c',
     'copy',
     '-tag:v',
-    'hvc1',
+    tag,
     '-f',
     'hls',
     '-hls_time',
@@ -141,217 +142,266 @@ async function writeOwn(
   absorbWriterPlaylist(dir)
 }
 
-describe('a recording that changed configuration part way', function () {
-  this.timeout(120_000)
-  let root: string
-  let dir: string
-
-  before(async function () {
-    if (!(await canEncode('libx265', 'aac'))) this.skip()
-    root = await mkdtemp(join(tmpdir(), 'tsMismatchedFinish-'))
-    dir = join(root, 'video')
-    await mkdir(dir)
-    const small = join(root, 'small.mp4')
-    const large = join(root, 'large.mp4')
-    const stamped = join(root, 'stamped.mp4')
-    await encodeFragmented(small, { codec: 'hevc', seconds: 3, sound: true })
-    await encodeFragmented(large, {
-      codec: 'hevc',
-      seconds: 3,
-      size: '320x240',
-      sound: true
-    })
-    await stampFile(large, stamped, START_MS)
-    await writeLive(small, dir, {})
-    await writeOwn(stamped, dir, 'init000003.mp4', 3)
-    await writeOwn(small, dir, 'init000006.mp4', 6)
-    await writeFile(
-      join(dir, 'master.m3u8'),
-      `${await readFile(join(dir, 'master.m3u8'), 'utf8')}#EXT-X-ENDLIST\n`
-    )
-  })
-
-  after(async function () {
-    if (root != null) await rm(root, { recursive: true, force: true })
-  })
-
-  it('has its parts in order, each under its own map', async function () {
-    const playlist = parseMediaPlaylist(
-      await readFile(join(dir, 'master.m3u8'), 'utf8')
-    )
-    expect(playlist.map?.uri).equals('init.mp4')
-    expect(
-      playlist.segments.map(segment => segment.map?.uri ?? playlist.map?.uri)
-    ).deep.equals([
-      'init.mp4',
-      'init.mp4',
-      'init.mp4',
-      'init000003.mp4',
-      'init000003.mp4',
-      'init000003.mp4',
-      'init000006.mp4',
-      'init000006.mp4',
-      'init000006.mp4'
-    ])
-  })
-
-  it("reads each segment's frames by its own init segment while live", async function () {
-    const { unreadable, cursor } = await scanNewSegments(
-      dir,
-      undefined,
-      () => START_MS + 60_000,
-      20
-    )
-    expect(unreadable).deep.equals([])
-    expect(cursor.segments).equals(9)
-  })
-
-  it('checks its sound against the first part alone', async function () {
-    const placement = await checkTrackStarts(join(dir, 'master.m3u8'))
-    expect(placement?.offsetSec).equals(0)
-  })
-
-  it('still has its length, from the playlist', async function () {
-    const duration = await probeDuration(
-      ffprobeFor(FFMPEG),
-      join(dir, 'master.m3u8')
-    )
-    expect(duration).closeTo(9, 0.2)
-  })
-
-  it('cuts a still from any part of the live playlist, at its own size', async function () {
-    const frame = await readLocalFrame(join(dir, 'master.m3u8'), 4.5, root)
-    expect(frame).not.equals(undefined)
-    expect(await videoSize(frame!.path)).equals('320,240')
-    await frame!.release()
-    const first = await readLocalFrame(join(dir, 'master.m3u8'), 0.5, root)
-    expect(await videoSize(first!.path)).equals('160,120')
-    await first!.release()
-  })
-
-  describe('finished', function () {
-    let result: Awaited<ReturnType<typeof toRecording>>
+for (const shape of [
+  {
+    codec: 'hevc',
+    encoder: 'libx265',
+    tag: 'hvc1',
+    small: '160x120',
+    large: '320x240'
+  },
+  {
+    codec: 'h264',
+    encoder: 'libx264',
+    tag: 'avc1',
+    small: '1280x720',
+    large: '1920x1080'
+  }
+] as const) {
+  const [smallW, smallH] = shape.small.split('x')
+  const [largeW, largeH] = shape.large.split('x')
+  describe(`a recording in ${shape.codec} that changed configuration part way`, function () {
+    this.timeout(120_000)
+    let root: string
+    let dir: string
 
     before(async function () {
-      // What a finish a crash cut short leaves: a `.vod/` with a playlist and
-      // part of its segments. The next finish starts again without it.
-      const half = join(dir, '.vod', 'out')
-      await mkdir(half, { recursive: true })
-      await writeFile(join(half, 'video.m3u8'), '#EXTM3U\nseg000000.m4s\n')
-      await writeFile(join(half, 'seg000000.m4s'), Buffer.alloc(64, 1))
-      result = await toRecording(FFMPEG, dir, () => undefined)
+      if (!(await canEncode(shape.encoder, 'aac'))) this.skip()
+      root = await mkdtemp(join(tmpdir(), 'tsMismatchedFinish-'))
+      dir = join(root, 'video')
+      await mkdir(dir)
+      const small = join(root, 'small.mp4')
+      const large = join(root, 'large.mp4')
+      const stamped = join(root, 'stamped.mp4')
+      await encodeFragmented(small, {
+        codec: shape.codec,
+        seconds: 3,
+        size: shape.small,
+        sound: true
+      })
+      await encodeFragmented(large, {
+        codec: shape.codec,
+        seconds: 3,
+        size: shape.large,
+        sound: true
+      })
+      await stampFile(large, stamped, START_MS)
+      await writeLive(small, dir, { tag: shape.tag })
+      await writeOwn(stamped, dir, 'init000003.mp4', 3, shape.tag)
+      await writeOwn(small, dir, 'init000006.mp4', 6, shape.tag)
+      await writeFile(
+        join(dir, 'master.m3u8'),
+        `${await readFile(join(dir, 'master.m3u8'), 'utf8')}#EXT-X-ENDLIST\n`
+      )
     })
 
-    it('starts again over a finish a crash cut short, and leaves nothing half made', async function () {
-      expect(existsSync(join(dir, '.vod'))).equals(false)
-      const recording = join(dir, 'recording')
+    after(async function () {
+      if (root != null) await rm(root, { recursive: true, force: true })
+    })
+
+    it('has its parts in order, each under its own map', async function () {
       const playlist = parseMediaPlaylist(
-        await readFile(join(recording, 'video.m3u8'), 'utf8')
+        await readFile(join(dir, 'master.m3u8'), 'utf8')
       )
-      // Every piece it lists is there, and they last the whole recording.
-      for (const segment of playlist.segments) {
-        expect(existsSync(join(recording, segment.uri)), segment.uri).equals(
-          true
-        )
-      }
+      expect(playlist.map?.uri).equals('init.mp4')
       expect(
-        playlist.segments.reduce((sum, one) => sum + one.durationSec, 0)
-      ).closeTo(result.durationSec, 0.2)
+        playlist.segments.map(segment => segment.map?.uri ?? playlist.map?.uri)
+      ).deep.equals([
+        'init.mp4',
+        'init.mp4',
+        'init.mp4',
+        'init000003.mp4',
+        'init000003.mp4',
+        'init000003.mp4',
+        'init000006.mp4',
+        'init000006.mp4',
+        'init000006.mp4'
+      ])
     })
 
-    it('is its playlists, an init segment for each part and the segments', function () {
-      const inits = result.files.filter(name => /^init\d*\.mp4$/.test(name))
-      const segments = result.files.filter(name => /^seg\d{6}\.m4s$/.test(name))
-      // The first part's init is init.mp4; each later part's is named after
-      // its first segment, as the live origin names them.
-      expect(inits[0]).equals('init.mp4')
-      expect(inits).length(3)
-      for (const init of inits.slice(1)) {
-        expect(segments).contains(`seg${init.slice(4, 10)}.m4s`)
-      }
-      expect(result.files).deep.equals(
-        ['master.m3u8', 'video.m3u8', ...inits, ...segments].sort()
+    it("reads each segment's frames by its own init segment while live", async function () {
+      const { unreadable, cursor } = await scanNewSegments(
+        dir,
+        undefined,
+        () => START_MS + 60_000,
+        20
       )
-      expect(result.files).does.not.contain('video.mp4')
-      if (process.env.TS_PROOF_TRACE != null) {
-        console.log(
-          `\n    a stream that changed configuration twice: recording/ holds ${result.files.join(', ')}`
-        )
-      }
-      expect(result.durationSec).closeTo(9, 0.2)
-      // The largest part's, not the first's.
-      expect(result.width).equals(320)
-      expect(result.height).equals(240)
+      expect(unreadable).deep.equals([])
+      expect(cursor.segments).equals(9)
     })
 
-    it('says in its master what its largest part needs', async function () {
-      const master = await readFile(
-        join(dir, 'recording', 'master.m3u8'),
-        'utf8'
+    it('checks its sound against the first part alone', async function () {
+      const placement = await checkTrackStarts(join(dir, 'master.m3u8'))
+      expect(placement?.offsetSec).equals(0)
+    })
+
+    it('still has its length, from the playlist', async function () {
+      const duration = await probeDuration(
+        ffprobeFor(FFMPEG),
+        join(dir, 'master.m3u8')
       )
-      const variant = master
-        .split('\n')
-        .find(line => line.startsWith('#EXT-X-STREAM-INF:'))
-      expect(variant).contains('RESOLUTION=320x240')
-      expect(variant).match(/CODECS="hvc1\.[^",]+,mp4a\.40\.2"/)
-      expect(master.trimEnd().split('\n').at(-1)).equals('video.m3u8')
+      expect(duration).closeTo(9, 0.2)
     })
 
-    it("decodes whole, part by part, with each part's own init segment", async function () {
-      const recording = join(dir, 'recording')
-      const body = await readFile(join(recording, 'video.m3u8'), 'utf8')
-      const playlist = parseMediaPlaylist(body)
-      expect(body.match(/#EXT-X-DISCONTINUITY/g)).length(2)
-      expect(body).does.not.contain('BYTERANGE')
-      if (process.env.TS_PROOF_TRACE != null) {
-        console.log(
-          `\n    its recording/video.m3u8:\n${body
-            .trimEnd()
-            .split('\n')
-            .map(line => `      ${line}`)
-            .join('\n')}`
-        )
-      }
-      const groups = new Map<string, Uint8Array[]>()
-      for (const segment of playlist.segments) {
-        const map = segment.map ?? playlist.map!
-        const parts = groups.get(map.uri) ?? [
-          await readPart(join(recording, map.uri), map.range)
-        ]
-        parts.push(await readPart(join(recording, segment.uri), segment.range))
-        groups.set(map.uri, parts)
-      }
-      expect(groups.size).equals(3)
-      const sizes: string[] = []
-      let index = 0
-      for (const parts of groups.values()) {
-        const path = join(root, `part${String(index++)}.mp4`)
-        await writeFile(path, Buffer.concat(parts))
-        expect(await decodeErrors(path)).equals('')
-        sizes.push(await videoSize(path))
-      }
-      expect(sizes).deep.equals(['160,120', '320,240', '160,120'])
-    })
-
-    it('is read for its stamps from the part that carries them', async function () {
-      const scan = await readRecordingStamps(join(dir, 'recording'))
-      expect(scan.stamped).length(1)
-      expect(scan.stamped[0][0]).closeTo(3000, 200)
-      expect(scan.stamped[0][1]).closeTo(6000, 200)
-      expect(scan.points.length).above(0)
-    })
-
-    it('cuts a still from any part of the recording', async function () {
-      const video = join(dir, 'recording', 'video.m3u8')
-      const frame = await readLocalFrame(video, 4.5, root)
-      expect(await videoSize(frame!.path)).equals('320,240')
+    it('cuts a still from any part of the live playlist, at its own size', async function () {
+      const frame = await readLocalFrame(join(dir, 'master.m3u8'), 4.5, root)
+      expect(frame).not.equals(undefined)
+      expect(await videoSize(frame!.path)).equals(`${largeW},${largeH}`)
       await frame!.release()
-      const last = await readLocalFrame(video, 7.5, root)
-      expect(await videoSize(last!.path)).equals('160,120')
-      await last!.release()
+      const first = await readLocalFrame(join(dir, 'master.m3u8'), 0.5, root)
+      expect(await videoSize(first!.path)).equals(`${smallW},${smallH}`)
+      await first!.release()
+    })
+
+    describe('finished', function () {
+      let result: Awaited<ReturnType<typeof toRecording>>
+
+      before(async function () {
+        // What a finish a crash cut short leaves: a `.vod/` with a playlist and
+        // part of its segments. The next finish starts again without it.
+        const half = join(dir, '.vod', 'out')
+        await mkdir(half, { recursive: true })
+        await writeFile(join(half, 'video.m3u8'), '#EXTM3U\nseg000000.m4s\n')
+        await writeFile(join(half, 'seg000000.m4s'), Buffer.alloc(64, 1))
+        result = await toRecording(FFMPEG, dir, () => undefined)
+      })
+
+      it('starts again over a finish a crash cut short, and leaves nothing half made', async function () {
+        expect(existsSync(join(dir, '.vod'))).equals(false)
+        const recording = join(dir, 'recording')
+        const playlist = parseMediaPlaylist(
+          await readFile(join(recording, 'video.m3u8'), 'utf8')
+        )
+        // Every piece it lists is there, and they last the whole recording.
+        for (const segment of playlist.segments) {
+          expect(existsSync(join(recording, segment.uri)), segment.uri).equals(
+            true
+          )
+        }
+        expect(
+          playlist.segments.reduce((sum, one) => sum + one.durationSec, 0)
+        ).closeTo(result.durationSec, 0.2)
+      })
+
+      it('is its playlists, an init segment for each part and the segments', function () {
+        const inits = result.files.filter(name => /^init\d*\.mp4$/.test(name))
+        const segments = result.files.filter(name =>
+          /^seg\d{6}\.m4s$/.test(name)
+        )
+        // The first part's init is init.mp4; each later part's is named after
+        // its first segment, as the live origin names them.
+        expect(inits[0]).equals('init.mp4')
+        expect(inits).length(3)
+        for (const init of inits.slice(1)) {
+          expect(segments).contains(`seg${init.slice(4, 10)}.m4s`)
+        }
+        expect(result.files).deep.equals(
+          ['master.m3u8', 'video.m3u8', ...inits, ...segments].sort()
+        )
+        expect(result.files).does.not.contain('video.mp4')
+        if (process.env.TS_PROOF_TRACE != null) {
+          console.log(
+            `\n    a stream that changed configuration twice: recording/ holds ${result.files.join(', ')}`
+          )
+        }
+        expect(result.durationSec).closeTo(9, 0.2)
+        // The largest part's, not the first's.
+        expect(result.width).equals(Number(largeW))
+        expect(result.height).equals(Number(largeH))
+      })
+
+      it('says in its master what its largest part needs', async function () {
+        const master = await readFile(
+          join(dir, 'recording', 'master.m3u8'),
+          'utf8'
+        )
+        const variant = master
+          .split('\n')
+          .find(line => line.startsWith('#EXT-X-STREAM-INF:'))
+        expect(variant).contains(`RESOLUTION=${shape.large}`)
+        expect(variant).match(
+          new RegExp(`CODECS="${shape.tag}\\.[^",]+,mp4a\\.40\\.2"`)
+        )
+        expect(master.trimEnd().split('\n').at(-1)).equals('video.m3u8')
+      })
+
+      it("decodes whole, part by part, with each part's own init segment", async function () {
+        const recording = join(dir, 'recording')
+        const body = await readFile(join(recording, 'video.m3u8'), 'utf8')
+        const playlist = parseMediaPlaylist(body)
+        expect(body.match(/#EXT-X-DISCONTINUITY/g)).length(2)
+        expect(body).does.not.contain('BYTERANGE')
+        if (process.env.TS_PROOF_TRACE != null) {
+          console.log(
+            `\n    its recording/video.m3u8:\n${body
+              .trimEnd()
+              .split('\n')
+              .map(line => `      ${line}`)
+              .join('\n')}`
+          )
+        }
+        const groups = new Map<string, Uint8Array[]>()
+        for (const segment of playlist.segments) {
+          const map = segment.map ?? playlist.map!
+          const parts = groups.get(map.uri) ?? [
+            await readPart(join(recording, map.uri), map.range)
+          ]
+          parts.push(
+            await readPart(join(recording, segment.uri), segment.range)
+          )
+          groups.set(map.uri, parts)
+        }
+        expect(groups.size).equals(3)
+        const sizes: string[] = []
+        let index = 0
+        for (const parts of groups.values()) {
+          const path = join(root, `part${String(index++)}.mp4`)
+          await writeFile(path, Buffer.concat(parts))
+          expect(await decodeErrors(path)).equals('')
+          sizes.push(await videoSize(path))
+        }
+        expect(sizes).deep.equals([
+          `${smallW},${smallH}`,
+          `${largeW},${largeH}`,
+          `${smallW},${smallH}`
+        ])
+        // Each part remuxed under its own codec's tag.
+        for (const uri of groups.keys()) {
+          const { stdout } = await run(ffprobeFor(FFMPEG), [
+            '-v',
+            'error',
+            '-select_streams',
+            'v',
+            '-show_entries',
+            'stream=codec_tag_string',
+            '-of',
+            'csv=p=0',
+            join(recording, uri)
+          ])
+          expect(stdout.trim(), uri).equals(shape.tag)
+        }
+      })
+
+      it('is read for its stamps from the part that carries them', async function () {
+        const scan = await readRecordingStamps(join(dir, 'recording'))
+        expect(scan.stamped).length(1)
+        expect(scan.stamped[0][0]).closeTo(3000, 200)
+        expect(scan.stamped[0][1]).closeTo(6000, 200)
+        expect(scan.points.length).above(0)
+      })
+
+      it('cuts a still from any part of the recording', async function () {
+        const video = join(dir, 'recording', 'video.m3u8')
+        const frame = await readLocalFrame(video, 4.5, root)
+        expect(await videoSize(frame!.path)).equals(`${largeW},${largeH}`)
+        await frame!.release()
+        const last = await readLocalFrame(video, 7.5, root)
+        expect(await videoSize(last!.path)).equals(`${smallW},${smallH}`)
+        await last!.release()
+      })
     })
   })
-})
+}
 
 describe('two configurations apart on the clock', function () {
   this.timeout(120_000)

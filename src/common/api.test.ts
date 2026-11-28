@@ -26,9 +26,11 @@ import {
   asSeasonSummary,
   asSession,
   asStandingsRow,
+  isStreamRefusal,
   planRefusal,
   type RequestOptions,
   type SaveLineupsBody,
+  STREAM_REFUSAL_PREFIXES,
   TeamStationClient,
   type TimedRequest
 } from './api'
@@ -5876,5 +5878,19 @@ describe('the request deadline', function () {
     expect(asChatKind('leagueUmpires')).equals('leagueUmpires')
     expect(asChatKind('leagueOrg')).equals('leagueOrg')
     expect(() => asChatKind('leagueReferees')).throws()
+  })
+})
+
+describe('the ingest refusals a camera row shows', function () {
+  it('knows each refusal by how it begins, and nothing else', function () {
+    for (const prefix of STREAM_REFUSAL_PREFIXES) {
+      expect(isStreamRefusal(`${prefix} More.`), prefix).equals(true)
+    }
+    expect(isStreamRefusal('The stream ended')).equals(false)
+    expect(
+      isStreamRefusal('TeamStation takes HEVC. This stream is H.264.')
+    ).equals(false)
+    expect(isStreamRefusal(null)).equals(false)
+    expect(isStreamRefusal(undefined)).equals(false)
   })
 })

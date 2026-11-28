@@ -30,6 +30,7 @@ import {
   readRecordingStamps
 } from '../media/wallClockScan'
 import { storeWallPoints } from '../media/wallTimeline'
+import { configurationOfInit } from './decoderConfig'
 import { boxesIn, fillHoles } from './holeFiller'
 import {
   FIRST_INIT,
@@ -267,21 +268,30 @@ export async function moveWallPoints(
   })
 }
 
+/** What `remuxOne` does its work with: a test's stand-ins, or the real ones. */
+export interface RemuxOneDeps {
+  remux?: typeof remuxToHls
+  sources?: typeof remuxSources
+}
+
 /**
  * One playlist's remux into `outDir`, holes and their fallback as above, up to
- * `joinAt` on the clock when another configuration starts there.
+ * `joinAt` on the clock when another configuration starts there, tagged by the
+ * codec of its own init segment (`partTag`).
  */
-async function remuxOne(
+export async function remuxOne(
   ffmpegPath: string,
   dir: string,
   playlistPath: string,
   initName: string,
   outDir: string,
   log: (message: string) => void,
-  joinAt?: number
+  joinAt?: number,
+  { remux = remuxToHls, sources = remuxSources }: RemuxOneDeps = {}
 ): Promise<void> {
+  const videoTag = await partTag(join(dir, initName))
   try {
-    const { source, unfilled } = await remuxSources(
+    const { source, unfilled } = await sources(
       dir,
       ffmpegPath,
       log,
@@ -290,9 +300,10 @@ async function remuxOne(
       joinAt
     )
     try {
-      await remuxToHls(ffmpegPath, {
+      await remux(ffmpegPath, {
         input: source,
         outDir,
+        videoTag,
         concatList: source !== playlistPath
       })
     } catch (error) {
@@ -302,15 +313,28 @@ async function remuxOne(
       )
       await rm(outDir, { recursive: true, force: true })
       await mkdir(outDir, { recursive: true })
-      await remuxToHls(ffmpegPath, {
+      await remux(ffmpegPath, {
         input: unfilled,
         outDir,
+        videoTag,
         concatList: true
       })
     }
   } finally {
     await rm(join(dir, '.holes'), { recursive: true, force: true })
   }
+}
+
+/**
+ * The `-tag:v` a part is remuxed under, from the codec its own init segment
+ * configures: `avc1` for H.264, and `hvc1` for HEVC, which Safari needs. An
+ * init segment that cannot be read is HEVC's, as every recording was before
+ * H.264 was taken.
+ */
+export async function partTag(initPath: string): Promise<'avc1' | 'hvc1'> {
+  const init = await readFile(initPath).catch(() => undefined)
+  const family = init == null ? undefined : configurationOfInit(init)?.family
+  return family === 'h264' ? 'avc1' : 'hvc1'
 }
 
 /** The part of a live playlist that one configuration wrote, in order. */
