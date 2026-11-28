@@ -4,7 +4,7 @@ import { expect } from 'chai'
 
 import type { FixtureAccount, FixtureManifest } from '../../core/fixtures'
 import type { JevControl, JevView } from '../../core/jevStub'
-import { BlockedError } from '../../core/result'
+import { BlockedError, HarnessError } from '../../core/result'
 import {
   defineHarness,
   type E2eContext,
@@ -346,23 +346,28 @@ export function proveLog(ctx: E2eContext, name: string, text: string): void {
   writeFileSync(ctx.artifact(name), text)
 }
 
-/** A stack control that can count the API log's lines holding a string. */
-export type LogCounting = StackControl & {
-  logCount?: (needle: string) => Promise<number>
-}
-
 /**
- * How many lines of the stack API's log hold `needle`, asked of the stack's
- * control routes, or undefined when the stack cannot say.
+ * How many of the stack API's log lines, read at or after `since` (all of
+ * them by default), hold `needle`, asked of the stack's `api-log` control
+ * route; undefined when the stack has no control or the route cannot say.
  */
 export async function serverLogCount(
   ctx: E2eContext,
-  needle: string
+  needle: string,
+  since = 0
 ): Promise<number | undefined> {
-  const control: LogCounting | undefined = (ctx.stack as HarnessStackHandle)
+  const control: StackControl | undefined = (ctx.stack as HarnessStackHandle)
     .control
-  if (typeof control?.logCount !== 'function') return undefined
-  return await control.logCount(needle)
+  if (typeof control?.apiLog !== 'function') return undefined
+  let lines
+  try {
+    lines = await control.apiLog(since)
+  } catch (error) {
+    // No such route on an older stack's fault server, or no log to read.
+    if (error instanceof HarnessError) return undefined
+    throw error
+  }
+  return lines.filter(line => line.text.includes(needle)).length
 }
 
 /** What every search spec declares alike. */

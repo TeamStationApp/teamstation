@@ -190,6 +190,12 @@ export interface StackControl {
   rateLimits: (body?: unknown) => Promise<unknown>
   restartApi: () => Promise<unknown>
   serverLog: (since: number) => Promise<ServerError[]>
+  /**
+   * The API's log lines the fault server read at or after `since`
+   * (`GET api-log`), each with the time it was read. Absent on a stack whose
+   * control has no such route.
+   */
+  apiLog?: (since: number) => Promise<Array<{ at: number; text: string }>>
   setFault: (fault: string | null) => Promise<void>
   jev: {
     read: () => Promise<JevView>

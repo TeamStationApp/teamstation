@@ -84,7 +84,9 @@ export default defineHarness({
           await web.see('[aria-label="Home plate"]', 30000)
           await web.tap('[aria-label="Home plate"]')
           await web.see('video', 30000)
-          await web.tap('video')
+          // The player's overlay takes every press on the picture: it is what
+          // a user touches to start playback, not the <video> beneath it.
+          await web.tap('[data-testid="gameVideoZones"]')
           await m.evalBrowserScript({
             script:
               "const video = document.querySelector('video'); if (video.paused) await video.play()"

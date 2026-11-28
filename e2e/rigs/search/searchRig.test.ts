@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { BlockedError } from '../../core/result'
+import { BlockedError, HarnessError } from '../../core/result'
 import type { E2eContext } from '../../core/spec'
 import {
   answered,
@@ -153,21 +153,49 @@ describe('the search rig', function () {
     expect(await serverLogCount(context({ control: {} }), 'x')).equals(
       undefined
     )
-    const asked: string[] = []
+    const asked: number[] = []
+    const lines = [
+      { at: 10, text: 'jev: ranked by jev-1 in 80 ms' },
+      { at: 11, text: 'search places ready' },
+      { at: 12, text: 'jev: ranked by jev-1 in 95 ms' }
+    ]
+    const control = {
+      apiLog: async (since: number) => {
+        asked.push(since)
+        return lines.filter(line => line.at >= since)
+      }
+    }
     expect(
-      await serverLogCount(
-        context({
-          control: {
-            logCount: async (needle: string) => {
-              asked.push(needle)
-              return 2
-            }
-          }
-        }),
-        'jev: ranked by jev-1'
-      )
+      await serverLogCount(context({ control }), 'jev: ranked by jev-1')
     ).equals(2)
-    expect(asked).deep.equals(['jev: ranked by jev-1'])
+    expect(
+      await serverLogCount(context({ control }), 'jev: ranked by jev-1', 11)
+    ).equals(1)
+    expect(await serverLogCount(context({ control }), 'secret-key')).equals(0)
+    expect(asked).deep.equals([0, 11, 0])
+    // A stack whose control has no api-log route cannot say.
+    const refused = {
+      apiLog: async () => {
+        throw new HarnessError(
+          "the stack's control answered GET api-log?since=0 with 404"
+        )
+      }
+    }
+    expect(await serverLogCount(context({ control: refused }), 'x')).equals(
+      undefined
+    )
+    const broken = {
+      apiLog: async () => {
+        throw new TypeError('fetch failed')
+      }
+    }
+    let failure: unknown
+    try {
+      await serverLogCount(context({ control: broken }), 'x')
+    } catch (error) {
+      failure = error
+    }
+    expect(String(failure)).includes('fetch failed')
   })
 
   it('keeps the search socket’s frames by socket and seq', function () {

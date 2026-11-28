@@ -414,6 +414,92 @@ describe('a fault server with no pages stand-in', function () {
   })
 })
 
+describe('the fault server’s API log route', function () {
+  const serve = async (
+    apiLog?: string
+  ): Promise<{
+    get: (
+      route: string,
+      token?: string | null
+    ) => Promise<{ status: number; body: any }>
+    close: () => Promise<void>
+  }> => {
+    const started = await startFaultServer({
+      listen: { host: '127.0.0.1', port: 0 },
+      target: 'http://127.0.0.1:1',
+      token: TOKEN,
+      ...(apiLog == null ? {} : { apiLog })
+    })
+    return {
+      get: async (route, token = TOKEN) => {
+        const reply = await fetch(`${started.proxy.url}/__e2e/${route}`, {
+          headers: token == null ? {} : { authorization: `Bearer ${token}` }
+        })
+        return { status: reply.status, body: await reply.json() }
+      },
+      close: started.close
+    }
+  }
+
+  it('answers the API’s log lines since a time, behind the token', async function () {
+    const dir = mkdtempSync(join(tmpdir(), 'e2e-faults-log-'))
+    const log = join(dir, 'api.log')
+    writeFileSync(log, 'worker 1 listening on 127.0.0.1:9100\n')
+    const server = await serve(log)
+    try {
+      expect((await server.get('api-log', null)).status).equals(401)
+      expect((await server.get('api-log', 'b'.repeat(64))).status).equals(401)
+      const first = await server.get('api-log?since=0')
+      expect(first.status).equals(200)
+      expect(first.body.lines.map((line: any) => line.text)).deep.equals([
+        'worker 1 listening on 127.0.0.1:9100'
+      ])
+      const read = first.body.lines[0].at as number
+      expect(read).a('number')
+      await new Promise(resolve => setTimeout(resolve, 5))
+      const after = Date.now()
+      writeFileSync(log, 'jev: ranked by jev-1\n', { flag: 'a' })
+      const since = await server.get(`api-log?since=${after}`)
+      expect(since.body.lines.map((line: any) => line.text)).deep.equals([
+        'jev: ranked by jev-1'
+      ])
+      expect(since.body.lines[0].at).at.least(after)
+      // No since, or one that is not a number, is the whole log.
+      expect((await server.get('api-log')).body.lines.length).equals(2)
+      expect((await server.get('api-log?since=soon')).body.lines.length).equals(
+        2
+      )
+    } finally {
+      await server.close()
+    }
+  })
+
+  it('says why when the log cannot be read, and 501 with no log to read', async function () {
+    const missing = join(
+      mkdtempSync(join(tmpdir(), 'e2e-faults-log-')),
+      'api.log'
+    )
+    const server = await serve(missing)
+    try {
+      const reply = await server.get('api-log?since=0')
+      expect(reply.status).equals(503)
+      expect(reply.body.error).equals(
+        `the API log at ${missing} cannot be read: ENOENT`
+      )
+    } finally {
+      await server.close()
+    }
+    const none = await serve()
+    try {
+      const reply = await none.get('api-log?since=0')
+      expect(reply.status).equals(501)
+      expect(reply.body.error).equals('this fault server reads no API log')
+    } finally {
+      await none.close()
+    }
+  })
+})
+
 describe('a fault server with no Places listener', function () {
   it('has no Jev stand-in to script', async function () {
     const started = await startFaultServer({
@@ -480,8 +566,39 @@ describe('the fault server’s command line', function () {
       listen: { host: '127.0.0.1', port: 9200 },
       target: 'http://127.0.0.1:9100',
       places: { host: '127.0.0.1', port: 9300 },
-      token: TOKEN
+      token: TOKEN,
+      // A pool stack's API log, beside the checkout it runs from.
+      apiLog: join(process.cwd(), '..', 'log', 'api.log')
     })
+    expect(
+      parseFaultServerArgs(
+        [
+          ...[
+            '--listen',
+            '127.0.0.1:9200',
+            '--target',
+            'http://127.0.0.1:9100'
+          ],
+          ...['--token-file', file, '--checkout', '/srv/e2e/app'],
+          ...['--api-log', '/var/log/api.log']
+        ],
+        {}
+      ).apiLog
+    ).equals('/var/log/api.log')
+    expect(
+      parseFaultServerArgs(
+        [
+          ...[
+            '--listen',
+            '127.0.0.1:9200',
+            '--target',
+            'http://127.0.0.1:9100'
+          ],
+          ...['--token-file', file, '--checkout', '/srv/e2e/app']
+        ],
+        {}
+      ).apiLog
+    ).equals('/srv/e2e/log/api.log')
     expect(() => parseFaultServerArgs(['--listen', '127.0.0.1:9200'])).to.throw(
       '--target is needed'
     )

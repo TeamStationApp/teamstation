@@ -7,6 +7,7 @@ import { join } from 'node:path'
 
 import { asJevControl, JevStub } from '../core/jevStub'
 import { PLACES_ANSWERS, startPlacesStub } from '../core/placesStub'
+import { ApiLogTail } from './apiLog'
 import { stackBroadcasts } from './broadcast'
 import { FAULTS } from './catalogue'
 import {
@@ -45,7 +46,8 @@ import {
  * (`e2e/core/jevStub.ts`):
  *
  *   node -r sucrase/register e2e/faults/server.ts --listen 127.0.0.1:9200 \
- *     --target http://127.0.0.1:9100 --places 127.0.0.1:9300 --token-file <file>
+ *     --target http://127.0.0.1:9100 --places 127.0.0.1:9300 --token-file <file> \
+ *     [--api-log <file>]
  *
  * It forwards everything to the API, recording each 5xx, and breaks the
  * matched routes while a fault is set. Its control routes, under /__e2e/,
@@ -56,6 +58,8 @@ import {
  *   PUT  /__e2e/fault  { fault | null }   a proxy fault from the catalogue, or none
  *   GET  /__e2e/errors?since=<ms>         { errors } newer than `since`
  *   GET  /__e2e/injections?since=<ms>     { injections } newer than `since`
+ *   GET  /__e2e/api-log?since=<ms>        { lines: [{ at, text }] } the API's log
+ *                                         lines read since then (`apiLog.ts`)
  *   GET  /__e2e/jev                       the Jev stand-in's script and requests
  *   PUT  /__e2e/jev    { passThrough?, rule?, queries? }
  *                                         replaces the script, forgetting the requests
@@ -285,6 +289,28 @@ function remuxRoute(
   })
 }
 
+/** GET /__e2e/api-log: the API's log lines read since `since`, or why there are none. */
+function apiLogRoute(
+  res: ServerResponse,
+  apiLog: ApiLogTail | undefined,
+  since: number
+): void {
+  if (apiLog == null) {
+    json(res, 501, { error: 'this fault server reads no API log' })
+    return
+  }
+  let lines
+  try {
+    lines = apiLog.since(Number.isFinite(since) ? since : 0)
+  } catch (error) {
+    json(res, 503, {
+      error: `the API log at ${apiLog.path} cannot be read: ${(error as NodeJS.ErrnoException).code ?? (error as Error).message}`
+    })
+    return
+  }
+  json(res, 200, { lines })
+}
+
 /** The /__e2e/ routes, for `startFaultProxy`'s `control`. */
 export function controlRoutes(
   proxy: () => FaultProxy,
@@ -294,7 +320,8 @@ export function controlRoutes(
   seed?: Seeder,
   pages?: PagesStandIn,
   database?: StackDatabase,
-  remux?: RemuxHandler
+  remux?: RemuxHandler,
+  apiLog?: ApiLogTail
 ): (req: IncomingMessage, res: ServerResponse) => boolean {
   return (req, res) => {
     if (pages != null && isPagesRequest(req)) {
@@ -337,6 +364,8 @@ export function controlRoutes(
       json(res, 200, {
         injections: proxy().injections.filter(row => row.at >= since)
       })
+    } else if (route === 'api-log' && req.method === 'GET') {
+      apiLogRoute(res, apiLog, since)
     } else if (route === 'seed' && req.method === 'POST') {
       seedRoute(req, res, seed)
     } else if (
@@ -401,6 +430,8 @@ export interface FaultServerOptions {
   database?: StackDatabase
   /** Makes the `remux` route's handler on the server's pages; without it the route answers 501. */
   remux?: (pages: PagesStandIn) => RemuxHandler
+  /** The API's log file, for `api-log`; without it the route answers 501. */
+  apiLog?: string
 }
 
 export async function startFaultServer(
@@ -435,6 +466,8 @@ export async function startFaultServer(
             : { speechPort: options.speechPort })
         })
   const pages = new PagesStandIn()
+  const apiLog =
+    options.apiLog == null ? undefined : new ApiLogTail(options.apiLog)
   const proxy = await startFaultProxy({
     target: options.target,
     host: options.listen.host,
@@ -448,7 +481,8 @@ export async function startFaultServer(
       options.seed,
       pages,
       options.database,
-      options.remux?.(pages)
+      options.remux?.(pages),
+      apiLog
     ),
     ...(standIns == null
       ? {}
@@ -475,6 +509,7 @@ export async function startFaultServer(
     ...(standIns == null ? {} : { standIns }),
     pages,
     close: async () => {
+      apiLog?.close()
       places?.server.close()
       await standIns?.close()
       await options.database?.close()
@@ -499,7 +534,9 @@ export function hostPort(
 /**
  * The command line's options. With `DATABASE_URL` set, the seed route seeds
  * that database from the checkout the server runs from (`--checkout`, by
- * default the working directory).
+ * default the working directory). The API's log is `--api-log`, by default
+ * `log/api.log` beside the checkout, where a pool stack's API unit appends
+ * its output (`/srv/e2e/log/api.log` beside `/srv/e2e/app`).
  */
 export function parseFaultServerArgs(
   argv: string[],
@@ -515,7 +552,8 @@ export function parseFaultServerArgs(
         '--target',
         '--places',
         '--token-file',
-        '--checkout'
+        '--checkout',
+        '--api-log'
       ].includes(flag) ||
       argv[i + 1] == null
     ) {
@@ -538,6 +576,7 @@ export function parseFaultServerArgs(
       ? {}
       : { places: hostPort(values['--places'], '--places') }),
     token: readFileSync(values['--token-file'], 'utf8').trim(),
+    apiLog: values['--api-log'] ?? join(checkout, '..', 'log', 'api.log'),
     ...(database == null
       ? {}
       : {

@@ -2,8 +2,8 @@ import assert from 'node:assert/strict'
 import { setTimeout as delay } from 'node:timers/promises'
 
 import type { Emulation } from '../../core/browserCdp'
-import { signInWithPassword } from '../../core/fixtures'
 import type { MaestroDevice } from '../../core/maestro'
+import { signInOnAnySurface } from '../../core/signIn'
 import type { HarnessContext, WebSession } from '../../core/spec'
 import {
   appLink,
@@ -175,7 +175,7 @@ async function waitForComposer(
     ) {
       await m.tapOn({ text: '^Later$', timeout: 5000 })
     } else if (labels.includes('Use a password instead')) {
-      await signInWithPassword(m, observer.person)
+      await signInOnAnySurface(m, observer.person)
     } else if (labels.includes('I’m 18 or Older')) {
       await m.tapOn({ id: 'chat-age-adult' })
     } else if (nodes.some(node => node.id === 'notification-ask-not-now')) {
@@ -261,7 +261,7 @@ export async function chatLinkUi(
     )
     if (labels.includes('Sign in')) await m.tapOn({ text: '^Sign in$' })
     if (labels.includes('Use a password instead') || labels.includes('Sign in'))
-      await signInWithPassword(m, observer.person)
+      await signInOnAnySurface(m, observer.person)
   }
   const enter = async (): Promise<void> => {
     if (web != null) await m.openLink({ link: f.origin + room })

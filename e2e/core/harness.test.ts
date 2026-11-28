@@ -29,6 +29,7 @@ import {
 import { Budget } from './judge'
 import { loadSpec, ROOT } from './manifest'
 import type { RunResult } from './result'
+import { signedInMark } from './signIn'
 import {
   defineE2e,
   defineHarness,
@@ -815,14 +816,18 @@ describe('the harness entry', function () {
         'utf8'
       )
     ).accounts.coach
+    const mark = signedInMark(coach)
     expect(seen).deep.equals([
+      // The form's password view, from whichever view it shows.
       'open https://stack.example.test/',
+      'see Use a sign-in code',
       'see Use a password instead',
+      'see Use a sign-in code',
       `type ${String(coach.email)}`,
       'type …',
-      // The password form, then its sign-in loop, each look for the menu mark.
-      'see TeamStation menu',
-      'see TeamStation menu',
+      // The send, then the try's wait, each look for the account's own button.
+      `see ${mark}`,
+      `see ${mark}`,
       'see Hosts'
     ])
   })
@@ -1314,6 +1319,11 @@ describe('the stack control client', function () {
       if (url.includes('errors')) {
         return new Response(JSON.stringify({ errors: [{ status: 500 }] }))
       }
+      if (url.includes('api-log')) {
+        return new Response(
+          JSON.stringify({ lines: [{ at: 6, text: 'worker 1 listening' }] })
+        )
+      }
       return new Response('{}')
     }) as unknown as typeof fetch
     const control = stackControl(
@@ -1323,6 +1333,9 @@ describe('the stack control client', function () {
     await control.rateLimits()
     await control.restartApi()
     expect(await control.serverLog(5)).deep.equals([{ status: 500 }])
+    expect(await control.apiLog!(6)).deep.equals([
+      { at: 6, text: 'worker 1 listening' }
+    ])
     await control.jev.read()
     await control.jev.set({ passThrough: true })
     await control.remux({ id: 1 })
@@ -1337,6 +1350,7 @@ describe('the stack control client', function () {
       'POST https://s/__e2e/rate-limits',
       'POST https://s/__e2e/restart-api',
       'GET https://s/__e2e/errors?since=5',
+      'GET https://s/__e2e/api-log?since=6',
       'GET https://s/__e2e/jev',
       'PUT https://s/__e2e/jev',
       'POST https://s/__e2e/remux',
