@@ -144,28 +144,30 @@ export function GlassTabs<Id extends string = string>(
               style={styles.target}
             >
               <View style={styles.labelBox}>
-                {/* The bold label, unseen, holds each tab at its selected
-                    width, so selecting one never pushes its neighbours. */}
-                <View style={styles.sizer} aria-hidden>
-                  {tab.live === true && <View style={styles.liveDot} />}
-                  <Text
-                    selectable={false}
-                    numberOfLines={1}
-                    style={[styles.label, styles.labelActive]}
+                {/* Both faces of the label, unseen, hold each tab at the
+                    wider of its two widths, so selecting one never pushes
+                    its neighbours or cuts its label short. */}
+                {[styles.labelActive, styles.labelIdle].map((face, i) => (
+                  <View
+                    key={i}
+                    style={[styles.sizer, i > 0 && styles.sizerUnder]}
+                    aria-hidden
                   >
-                    {tab.label}
-                  </Text>
-                  {tab.badge != null && (
-                    <Text style={styles.badge}>{tab.badge}</Text>
-                  )}
-                </View>
+                    {tab.live === true && <View style={styles.liveDot} />}
+                    <Text selectable={false} style={[styles.label, face]}>
+                      {tab.label}
+                    </Text>
+                    {tab.badge != null && (
+                      <Text style={styles.badge}>{tab.badge}</Text>
+                    )}
+                  </View>
+                ))}
                 <View style={styles.shown}>
                   {tab.live === true && (
                     <View testID="pill-live-dot" style={styles.liveDot} />
                   )}
                   <Text
                     selectable={false}
-                    numberOfLines={1}
                     style={[
                       styles.label,
                       isSelected ? styles.labelActive : styles.labelIdle
@@ -224,6 +226,11 @@ const getStyles = cacheStyles((theme: Theme) => ({
     alignItems: 'center',
     gap: theme.rem(theme.spaceXsRem),
     opacity: 0
+  },
+  // The second face sits under the first, so the box takes the wider.
+  sizerUnder: {
+    height: 0,
+    overflow: 'hidden'
   },
   shown: {
     position: 'absolute',
