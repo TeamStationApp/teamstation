@@ -11,6 +11,7 @@ import { markPinned } from './pinnedGlass'
 import {
   anchored,
   AT_REST,
+  glassGrowth,
   type HeadState,
   inStep,
   type PinnedHead,
@@ -60,6 +61,8 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
   const content = useRef<Node>(null)
   const row = useRef<Node>(null)
   const spacer = useRef<Node>(null)
+  /** The glass pane a glass pill band grows down from the header. */
+  const glass = useRef<Node>(null)
   /** This screen's key in `pinnedGlass`. */
   const glassKey = useRef({}).current
   useEffect(
@@ -110,17 +113,20 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
           ? header
           : header + pinAt.current - Math.min(head.collapse, pinAt.current)
       }px`
-      markPinned(
-        glassKey,
-        pinAt.current > 0 && Math.min(head.y, head.collapse) >= pinAt.current
-      )
+      const band = pills.current.offsetHeight
+      const { reach, progress } = glassGrowth(head, pinAt.current, band)
+      if (glass.current != null) {
+        glass.current.style.top = `${-(header + reach)}px`
+        glass.current.style.height = `${header + progress * band}px`
+      }
+      markPinned(glassKey, progress > 0)
     }
     if (card.current != null) {
       const held = !inStep(head)
       card.current.style.position = held ? 'sticky' : ''
       card.current.style.top = held ? `${header - head.collapse}px` : ''
     }
-  }, [])
+  }, [glassKey])
 
   /** Every distance the anchor needs, read with sticky lifted. */
   const measure = useCallback(() => {
@@ -364,7 +370,11 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
           pills.current = node as Node
         },
         style: NO_STYLE,
-        glassKey
+        glassKey,
+        glassRef: (node: unknown) => {
+          glass.current = node as Node
+          paint()
+        }
       },
       content: {
         ref: (node: unknown) => {
@@ -393,6 +403,6 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
       },
       select
     }),
-    [cardRef, glassKey, onScroll, select]
+    [cardRef, glassKey, onScroll, paint, select]
   )
 }

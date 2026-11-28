@@ -115,6 +115,30 @@ export function spacerFor(
   return Math.max(0, target + viewportHeight - contentBottom)
 }
 
+/**
+ * How far a glass pill band has carried the header's glass down over it.
+ *
+ * `reach` is how far below the header the band's top edge is drawn now: 0
+ * once it is pinned. Over the last band-height of its travel the glass grows
+ * down from the header's lower edge, `progress` going from 0 to 1, and meets
+ * the band's lower edge as the band pins; scrolling back shrinks it the same
+ * way. It follows the page exactly, so a slow scroll is a slow grow and a
+ * held one holds it, as the card's name does going into the header.
+ */
+export function glassGrowth(
+  state: HeadState,
+  pinAt: number,
+  bandHeight: number
+): { reach: number; progress: number } {
+  'worklet'
+  const reach = Math.max(0, pinAt - Math.min(state.y, state.collapse))
+  const progress =
+    pinAt <= 0 || bandHeight <= 0
+      ? 0
+      : Math.min(1, Math.max(0, 1 - reach / bandHeight))
+  return { reach, progress }
+}
+
 /** Whether the head is where a plain scroll from the top would put it. */
 export function inStep(state: HeadState): boolean {
   'worklet'
@@ -162,8 +186,18 @@ export interface PinnedHead {
   }
   /** The band holding the card, and the band holding the pills. */
   cardBand: Part & { style: BandStyle }
-  /** `glassKey`: the band's key in `pinnedGlass`, where it reports. */
-  pillBand: Part & { style: BandStyle; glassKey?: object }
+  /**
+   * `glassKey`: the band's key in `pinnedGlass`, where it reports whether its
+   * glass has started to grow. `glassRef` and `glassStyle` are for the pane
+   * of glass it grows (`glassGrowth`): the browser writes to the node, the
+   * phone animates the style.
+   */
+  pillBand: Part & {
+    style: BandStyle
+    glassKey?: object
+    glassRef?: React.Ref<React.ComponentRef<typeof View>>
+    glassStyle?: BandStyle
+  }
   /**
    * The selected tab's content, and on the schedule its next game and the
    * section holding it (the phone measures the row from its section).

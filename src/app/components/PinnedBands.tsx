@@ -66,20 +66,22 @@ export function PillBand(props: {
   /** Outside a column with its gaps: none of them to take back. */
   flat?: boolean
   /**
-   * Pinned, the band carries the header's glass down past its pills: one
-   * pane from the top of the screen to the band's lower edge, while the
-   * header draws none of its own. What scrolls under the pills blurs exactly
-   * as it does under the header, with no seam where two panes would meet.
-   * Work in progress.
+   * The band carries the header's glass down past its pills: one pane from
+   * the top of the screen, growing down from the header's lower edge as the
+   * band rises to it and reaching the band's lower edge as it pins
+   * (`glassGrowth`), while the header draws none of its own. What scrolls
+   * under the pills blurs exactly as it does under the header, with no seam
+   * where two panes would meet. Work in progress.
    */
   glass?: boolean
   children: React.ReactNode
 }): React.ReactElement {
   const { part, testID, flat = false, glass = false, children } = props
   const styles = getStyles(useTheme())
-  const { headerHeight } = useHeaderSlot()
-  const pinned = usePinned(part.glassKey ?? NO_KEY)
-  const glassy = glass && pinned && part.glassKey != null
+  // Growing: the header has handed its glass to this band's pane.
+  const growing = usePinned(part.glassKey ?? NO_KEY)
+  const grows = glass && part.glassKey != null
+  const glassy = grows && growing
   return (
     <Band
       testID={testID}
@@ -98,19 +100,29 @@ export function PillBand(props: {
         iOS's glass blurs less at its very edge, and a row passing under it
         showed sharp there, just above the pinned pills.
       */}
-      {glassy ? (
-        <GlassView
+      {grows && (
+        // Placed and sized from the scroll by the head, every frame; the
+        // glass itself is drawn only while the header has none of its own.
+        <Animated.View
+          ref={part.glassRef}
           pointerEvents="none"
-          style={[styles.glassPane, { top: -headerHeight }]}
-        />
-      ) : (
+          style={[styles.glassPane, part.glassStyle]}
+        >
+          {glassy && (
+            <>
+              <GlassView style={styles.glassFill} />
+              <View style={styles.glassEdge} />
+            </>
+          )}
+        </Animated.View>
+      )}
+      {!glassy && (
         <View
           pointerEvents="none"
           style={[styles.backdrop, { top: -GLASS_EDGE, height: GLASS_EDGE }]}
         />
       )}
       {children}
-      {glassy && <View pointerEvents="none" style={styles.glassEdge} />}
     </Band>
   )
 }
@@ -245,14 +257,21 @@ const getStyles = cacheStyles((theme: Theme) => ({
   bandClear: {
     backgroundColor: 'transparent'
   },
-  // The header's glass, from the top of the screen to the band's lower edge.
+  // The header's glass, from the top of the screen down to however far it
+  // has grown: the head sets its top and height.
   glassPane: {
     position: 'absolute',
     left: 0,
-    right: 0,
-    bottom: 0
+    right: 0
   },
-  // The header's lower line, moved down to the glass's new lower edge.
+  glassFill: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
+    right: 0
+  },
+  // The header's lower line, carried down at the glass's lower edge.
   glassEdge: {
     position: 'absolute',
     left: 0,

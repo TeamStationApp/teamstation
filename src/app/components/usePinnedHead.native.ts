@@ -24,6 +24,7 @@ import {
   anchored,
   AT_REST,
   cardOffset,
+  glassGrowth,
   type HeadState,
   pillsOffset,
   type PinnedHead,
@@ -290,7 +291,7 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
       { translateY: cardOffset({ y: y.value, collapse: collapse.value }) }
     ]
   }))
-  // Whether the pills are pinned under the header, for a glass band
+  // Whether a glass band's glass has started to grow down from the header
   // (`pinnedGlass`): reported to React only when it changes.
   const glassKey = useRef({}).current
   useEffect(
@@ -307,12 +308,37 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
     },
     [glassKey]
   )
+  const bandHeight = useSharedValue(0)
+  const headerHeight = useSharedValue(options.headerHeight)
+  useEffect(() => {
+    headerHeight.value = options.headerHeight
+  }, [headerHeight, options.headerHeight])
   useAnimatedReaction(
-    () => pinAt.value > 0 && Math.min(y.value, collapse.value) >= pinAt.value,
+    () =>
+      glassGrowth(
+        { y: y.value, collapse: collapse.value },
+        pinAt.value,
+        bandHeight.value
+      ).progress > 0,
     (now, before) => {
+      // eslint-disable-next-line @typescript-eslint/no-deprecated -- as notify below: scheduleOnRN takes its arguments directly
       if (now !== before) runOnJS(reportPinned)(now)
     }
   )
+  // The pane of glass a glass band grows down from the header, frame by
+  // frame with the page (`glassGrowth`).
+  const glassStyle = useAnimatedStyle(() => {
+    const band = bandHeight.value
+    const { reach, progress } = glassGrowth(
+      { y: y.value, collapse: collapse.value },
+      pinAt.value,
+      band
+    )
+    return {
+      top: -(headerHeight.value + reach),
+      height: headerHeight.value + progress * band
+    }
+  })
   const pillStyle = useAnimatedStyle(() => ({
     transform: [
       {
@@ -559,7 +585,9 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
       pillBand: {
         style: pillStyle,
         glassKey,
+        glassStyle,
         handleLayout: (event: LayoutChangeEvent) => {
+          bandHeight.value = event.nativeEvent.layout.height
           const at = event.nativeEvent.layout.y
           measured.current.pinAt = at
           pinAt.value = at
@@ -604,8 +632,10 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
     }),
     [
       cardRef,
+      bandHeight,
       cardStyle,
       glassKey,
+      glassStyle,
       onScroll,
       pillStyle,
       pinAt,
