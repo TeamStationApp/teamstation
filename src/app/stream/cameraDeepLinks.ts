@@ -102,8 +102,8 @@ export function rtmpUrlParts(url: string): RtmpUrlParts | undefined {
 }
 
 /**
- * The fields of both Mevo links. The ingest takes HEVC only, so the encoder is
- * always named.
+ * The fields of both Mevo links. Mevo encodes HEVC, which TeamStation prefers
+ * to H.264, so the encoder is always named.
  */
 function mevoQuery(parts: RtmpUrlParts, title: string): string {
   const fields: Array<[string, string | number]> = [

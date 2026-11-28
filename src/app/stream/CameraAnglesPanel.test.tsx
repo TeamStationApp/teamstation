@@ -1915,7 +1915,7 @@ describe('setting up a camera on a phone', function () {
       expect(text()).contains(
         'If your app requests a stream key, leave it blank.'
       )
-      expect(text()).contains('Your camera must stream in HEVC (H.265).')
+      expect(text()).contains('HEVC recommended, H.264 accepted.')
       expect(text()).contains(
         'You may now return to the app and stream to the RTMP URL at any time.'
       )
@@ -3135,7 +3135,7 @@ describe('web camera management', function () {
     expect(text()).contains('Mevo Studio')
     await pressId('sheet-cancel')
     await toRtmp(fake)
-    expect(text()).contains('HEVC')
+    expect(text()).contains('HEVC recommended, H.264 accepted.')
     await pressId('rtmp-copy')
     expect(text()).contains('Copied')
     await pressId('rtmp-done')

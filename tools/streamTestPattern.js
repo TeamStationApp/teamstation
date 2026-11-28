@@ -11,7 +11,8 @@
  *   node tools/streamTestPattern.js --url rtmp://... --codec hevc
  *   node tools/streamTestPattern.js --url rtmp://... --codec libx265
  *
- * `--codec hevc` is what a game's stream URL takes: its ingest refuses H.264.
+ * A game's stream URL takes `--codec h264` and `--codec hevc` alike, at 720p to
+ * 1080p; TeamStation's own cameras send HEVC.
  * It encodes with VideoToolbox on a Mac and libx265 elsewhere. Any other value
  * is an ffmpeg encoder name, used as given: libx264 and libx265 get their
  * low-latency tuning and a VideoToolbox encoder its realtime rate, while any

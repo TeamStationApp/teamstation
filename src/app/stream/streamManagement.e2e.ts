@@ -80,12 +80,12 @@
 //   copy, and the copy goes. Delete asks, then takes the video, the row and the
 //   copy. A camera deleted over the API takes this phone's copy at its next
 //   read. A camera with no copy here offers neither, and Play plays it.
-//   E12. tools/streamTestPattern.js publishes H.264 to a new camera: the
-//   ingest refuses it, and the idle row says why.
+//   E12. tools/streamTestPattern.js publishes H.264 at 960×540 to a new
+//   camera: the ingest refuses its size, and the idle row says why.
 //   E13, on iOS with Mevo Studio missing: its row opens nothing else, and the
 //   RTMP sheet shows the camera it made.
 //   E15. A refused encoder keeps retrying: tools/streamTestPattern.js publishes
-//   H.264 for 3 s in a loop, with each gap of TS_STREAM_RETRIES between tries,
+//   H.264 at 960×540 for 3 s in a loop, with each gap of TS_STREAM_RETRIES between tries,
 //   at a different moment for each camera. Tap the row, Revoke, confirm: the
 //   sheet goes with no error, the camera leaves the list, and no list read or
 //   row drawn along the way says it published.
@@ -1030,8 +1030,7 @@ async function setup(): Promise<void> {
         'the sheet shows the server’s URL'
       )
       assert(
-        (await find(byText('Your camera must stream in HEVC (H.265).'))) !=
-          null,
+        (await find(byText('HEVC recommended, H.264 accepted.'))) != null,
         'the sheet names the codec'
       )
       const rtmpShare = await sheetShare('rtmp-url-sheet')
@@ -1253,9 +1252,14 @@ async function setup(): Promise<void> {
 }
 
 /** Publishes the test pattern to a URL, from the repository's own tool. */
-function publish(url: string, seconds: number, codec = 'hevc'): ChildProcess {
+function publish(
+  url: string,
+  seconds: number,
+  codec = 'hevc',
+  size = '1280x720'
+): ChildProcess {
   say(
-    `$ node tools/streamTestPattern.js --url <the camera's URL> --duration ${seconds} --codec ${codec}`
+    `$ node tools/streamTestPattern.js --url <the camera's URL> --duration ${seconds} --codec ${codec} --size ${size}`
   )
   return spawn(
     'node',
@@ -1266,7 +1270,9 @@ function publish(url: string, seconds: number, codec = 'hevc'): ChildProcess {
       '--duration',
       String(seconds),
       '--codec',
-      codec
+      codec,
+      '--size',
+      size
     ],
     { stdio: 'ignore' }
   )
@@ -1280,13 +1286,14 @@ interface RetryLoop {
 }
 
 /**
- * `publish` over and over, as an encoder left running does: a 3 s H.264 try,
+ * `publish` over and over, as an encoder left running does: a 3 s try of
+ * H.264 at 960×540, a size the ingest refuses,
  * then `gapSeconds` of quiet, until stopped. Each try is its own `node`
  * process with an argument list, so the URL never passes through a shell.
  */
 function retryForever(url: string, gapSeconds: number): RetryLoop {
   say(
-    `$ while :; do node tools/streamTestPattern.js --url <the camera's URL> --codec h264 --duration 3; sleep ${gapSeconds}; done`
+    `$ while :; do node tools/streamTestPattern.js --url <the camera's URL> --codec h264 --size 960x540 --duration 3; sleep ${gapSeconds}; done`
   )
   const loop: RetryLoop = { stopped: false }
   const next = (): void => {
@@ -1299,6 +1306,8 @@ function retryForever(url: string, gapSeconds: number): RetryLoop {
         url,
         '--codec',
         'h264',
+        '--size',
+        '960x540',
         '--duration',
         '3'
       ],
@@ -1920,11 +1929,11 @@ async function rows(): Promise<void> {
         (await find(byId(`angle-row-${camera.id}`), 15000)) != null,
         'its row'
       )
-      const publisher = publish(camera.url, 25, 'h264')
+      const publisher = publish(camera.url, 25, 'h264', '960x540')
       running.push(publisher)
       const words = await rowReads(
         camera.id,
-        ['Bullpen', 'TeamStation takes HEVC', 'Idle'],
+        ['Bullpen', 'TeamStation takes 720p to 1080p', 'Idle'],
         45000
       )
       publisher.kill('SIGINT')

@@ -6,7 +6,8 @@ import { createRoot, type Root } from 'react-dom/client'
 import {
   canDeleteCameraVideo,
   type GameLiveStreams,
-  type LiveStream
+  type LiveStream,
+  STREAM_REFUSAL_PREFIXES
 } from '../../common/api'
 import { userIdOfGumbo } from '../../common/userId'
 import {
@@ -56,13 +57,24 @@ describe('a camera’s refusal', function () {
   const refused =
     'What happened? This stream has already been started with HEVC and therefore must be streamed with the same codec. End the stream and start a new stream to switch codecs.'
 
-  it('tells the owner of an idle camera why it sits there', function () {
-    expect(cameraRefusal(external({ lastError: refused }), true)).equals(
-      refused
-    )
-    const codec =
-      'TeamStation takes H.264 and HEVC. This stream is vp09, which it cannot store.'
-    expect(cameraRefusal(external({ lastError: codec }), true)).equals(codec)
+  it('tells the owner of an idle camera why it sits there, for every refusal', function () {
+    const refusals = [
+      'TeamStation takes H.264 and HEVC. This stream is vp09, which it cannot store.',
+      refused,
+      'What happened? This stream has already been started with H.264 and therefore must be streamed with the same codec. End the stream and start a new stream to switch codecs.',
+      'TeamStation takes 720p to 1080p. This stream is 960 × 540 — change the resolution and start it again.'
+    ]
+    for (const prefix of STREAM_REFUSAL_PREFIXES) {
+      expect(
+        refusals.some(lastError => lastError.startsWith(prefix)),
+        prefix
+      ).equals(true)
+    }
+    for (const lastError of refusals) {
+      expect(cameraRefusal(external({ lastError }), true), lastError).equals(
+        lastError
+      )
+    }
   })
 
   it('leaves out anything else the ingest wrote', function () {
