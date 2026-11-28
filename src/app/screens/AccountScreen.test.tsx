@@ -1111,6 +1111,66 @@ describe('Account settings screen', () => {
     await press('Cancel password change')
     expect(button('Change password')).not.equals(undefined)
   })
+  it('shows the account email as the username in every password form', async () => {
+    const usernameField = (): HTMLInputElement | null =>
+      document.querySelector<HTMLInputElement>(
+        'input[aria-label="Account email"]'
+      )
+    const above = (first: Element, label: string): boolean => {
+      const second = document.querySelector(`input[aria-label="${label}"]`)
+      expect(second, label).not.equals(null)
+      return (
+        (first.compareDocumentPosition(second!) &
+          window.Node.DOCUMENT_POSITION_FOLLOWING) !==
+        0
+      )
+    }
+    const expectUsername = (next: string): void => {
+      const field = usernameField()
+      expect(field, 'Account email').not.equals(null)
+      expect(field!.value).equals('alex@example.com')
+      expect(field!.readOnly).equals(true)
+      expect(field!.getAttribute('autocomplete')).equals('username')
+      expect(button('Clear Account email')).equals(undefined)
+      expect(above(field!, next), `Account email above ${next}`).equals(true)
+    }
+    const f = fixture()
+    await render(<AccountScreen {...f} onSignOut={() => undefined} />)
+    expect(usernameField()).equals(null)
+    await press('Set password')
+    expectUsername('New password')
+    await change('New password', 'invented test password')
+    await change('Confirm new password', 'invented test password')
+    await press('Save password')
+    expect(text()).includes('Password saved')
+    expect(usernameField()).equals(null)
+    await press('Change password')
+    expectUsername('Current password')
+    expectUsername('New password')
+    await press('Reset with an email code')
+    expectUsername('Password reset code')
+    await press('Cancel password change')
+    expect(usernameField()).equals(null)
+    await act(async () => {
+      root?.unmount()
+      root = undefined
+      await delay()
+    })
+    document.body.replaceChildren()
+
+    const admin = fixture(false, true)
+    await render(
+      <AccountScreen
+        {...admin}
+        target={{ userId: userIdOfGumbo(103), api: admin.client }}
+        onSignOut={() => undefined}
+      />
+    )
+    expect(text()).includes('alex@example.com')
+    expect(button('Set password')).equals(undefined)
+    expect(button('Change password')).equals(undefined)
+    expect(usernameField()).equals(null)
+  })
   it('shows password requirements once, live completion and only matching feedback for confirmation', async () => {
     const f = fixture()
     await render(<AccountScreen {...f} onSignOut={() => undefined} />)

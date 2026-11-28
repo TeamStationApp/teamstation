@@ -90,8 +90,16 @@ async function main(): Promise<void> {
         serverIterations: saved.server.iterations
       })
     }
+    // After a save, the sticky Account header can cover the button where it
+    // stands, and maestro-d fails a covered tap: it is brought to the middle.
+    const changePassword = async (): Promise<void> => {
+      await m.evalBrowserScript({
+        script: `for (const node of document.querySelectorAll('[role="button"]')) if (node.textContent.trim() === 'Change password') { node.scrollIntoView({ block: 'center' }); break }`
+      })
+      await m.tapOn({ text: 'Change password' })
+    }
     await record()
-    await m.tapOn({ text: 'Change password' })
+    await changePassword()
     await fill('Current password', 'Example8')
     await fill('New password', 'abcdefghijklmnop')
     await fill('Confirm new password', 'abcdefghijklmnop')
@@ -106,12 +114,7 @@ async function main(): Promise<void> {
     await m.tapOn({ text: 'Save password' })
     await m.assertVisible({ text: 'Password saved', timeout: 60000 })
     await record()
-    // After the save, the sticky Account header covers the button where it
-    // stands, and maestro-d fails a covered tap: it is brought to the middle.
-    await m.evalBrowserScript({
-      script: `for (const node of document.querySelectorAll('[role="button"]')) if (node.textContent.trim() === 'Change password') { node.scrollIntoView({ block: 'center' }); break }`
-    })
-    await m.tapOn({ text: 'Change password' })
+    await changePassword()
     await m.tapOn({ text: 'Reset with an email code' })
     await m.assertVisible({ css: 'input[aria-label="Password reset code"]' })
     const code = h.mail.get('alex@example.com')

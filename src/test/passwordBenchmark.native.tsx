@@ -14,6 +14,7 @@ import {
   DEFAULT_PASSWORD_COSTS,
   newPasswordRequirements
 } from '../common/passwordProtocol'
+import { userIdOfGumbo } from '../common/userId'
 
 function PasswordBenchmark(): React.ReactElement {
   const [form, setForm] = useState<{
@@ -105,8 +106,9 @@ function PasswordBenchmark(): React.ReactElement {
         new Response(
           JSON.stringify({
             user: {
-              id: 101,
+              id: userIdOfGumbo(101),
               displayName: 'Demo',
+              email: 'demo@example.test',
               isAdmin: false,
               avatarUrl: null
             },
@@ -123,7 +125,13 @@ function PasswordBenchmark(): React.ReactElement {
       session: {
         token: '',
         expiresAt: '',
-        user: { id: 101, displayName: 'Demo', isAdmin: false, avatarUrl: null }
+        user: {
+          id: userIdOfGumbo(101),
+          displayName: 'Demo',
+          email: 'demo@example.test',
+          isAdmin: false,
+          avatarUrl: null
+        }
       }
     })
   }

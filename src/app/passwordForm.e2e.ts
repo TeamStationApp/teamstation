@@ -28,9 +28,22 @@ async function main(): Promise<void> {
     artifacts: 'none'
   })
   try {
-    await m.launchApp({ clearState: true })
-    await m.tapOn({ text: 'Show password form' })
-    await m.tapOn({ text: 'Set password' })
+    // Just after launch the button is on screen before React Native takes
+    // taps, and a tap then does nothing: tap again until the form opens.
+    async function openForm(button: string): Promise<void> {
+      await m.launchApp({ clearState: true })
+      for (let attempt = 1; ; attempt++) {
+        await m.tapOn({ text: button })
+        try {
+          await m.assertVisible({ text: 'Set password', timeout: 5000 })
+          break
+        } catch (error) {
+          if (attempt === 5) throw error
+        }
+      }
+      await m.tapOn({ text: 'Set password' })
+    }
+    await openForm('Show password form')
     async function fill(label: string, value: string): Promise<void> {
       await m.tapOn({ text: label })
       await m.eraseText({ characters: 100 })
@@ -64,17 +77,13 @@ async function main(): Promise<void> {
     })
     await m.tapOn({ text: 'Save password' })
     await m.assertVisible({ text: 'Password saved', timeout: 30000 })
-    await m.launchApp({ clearState: true })
-    await m.tapOn({ text: 'Show pending password form' })
-    await m.tapOn({ text: 'Set password' })
+    await openForm('Show pending password form')
     await m.scrollUntilVisible({
       element: { text: 'Preparing password security… You can keep typing.' },
       direction: 'down'
     })
     await writeFile(artifacts + '/password-preparing.png', await m.screenshot())
-    await m.launchApp({ clearState: true })
-    await m.tapOn({ text: 'Show failed password form' })
-    await m.tapOn({ text: 'Set password' })
+    await openForm('Show failed password form')
     await m.scrollUntilVisible({
       element: { text: 'Retry password preparation' },
       direction: 'down'
