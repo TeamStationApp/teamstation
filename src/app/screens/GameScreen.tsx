@@ -123,6 +123,7 @@ import {
   MAPPING_WAIT_MS,
   type WallMapping
 } from '../player/wallMapping'
+import { PlaysTab } from '../plays/PlaysTab'
 import { HeldGameNotice } from '../scoring/HeldGameNotice'
 import type { GameRecording } from '../stream/gameRecording'
 import { playById } from '../stream/playById'
@@ -136,7 +137,7 @@ import { BoxScore } from './BoxScore'
 import { EventInfoTab } from './EventInfoTab'
 import { defaultEventTab, eventEndTime } from './eventTabPolicy'
 import { gameStatusLine, winnerOf } from './format'
-import { gameActions, gameTabs, heroCoachSides } from './gameTabs'
+import { gameActions, gameTabs, hasPlaysPill, heroCoachSides } from './gameTabs'
 import { GameWatchLayout } from './GameWatchLayout'
 import { watchHandoff } from './gameWatchLayoutProps'
 import { showVideoLivePill } from './livePillPolicy'
@@ -272,7 +273,7 @@ export interface GameScreenProps {
   ) => void
 }
 
-type Tab = 'info' | 'boxScore' | 'watch'
+type Tab = 'info' | 'boxScore' | 'watch' | 'plays'
 
 /**
  * What each of a game's videos is called on the strip under the picture.
@@ -918,6 +919,17 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     tab,
     anchorOnRow: false
   })
+  // Plays asked for where there is no Plays pill — an address's `?tab=plays`
+  // on a game nobody has pitched in — is the game's default section instead,
+  // and the address says so (`below` shows nothing for it meanwhile).
+  const playsMissing = game != null && tab === 'plays' && !hasPlaysPill(game)
+  useEffect(() => {
+    if (game == null || !playsMissing) return
+    explicitSelection.current = false
+    const next = defaultEventTab(game, clockNow)
+    setTab(next)
+    onTab?.(next)
+  }, [game, playsMissing, clockNow, onTab])
   const headerScore = useMemo(
     () =>
       game == null ? null : game.eventKind === 'event' ? (
@@ -2306,7 +2318,13 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           props.onReplay?.()
           return
         }
-        if (next !== 'info' && next !== 'boxScore' && next !== 'watch') return
+        if (
+          next !== 'info' &&
+          next !== 'boxScore' &&
+          next !== 'watch' &&
+          next !== 'plays'
+        )
+          return
         selectSection(next)
       }}
       size="compact"
@@ -2814,6 +2832,16 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
                     )
                   }
             }
+          />
+        )
+      ) : tab === 'plays' ? (
+        playsMissing ? null : (
+          <PlaysTab
+            key={gameId}
+            client={client}
+            game={game}
+            signedIn={props.signedIn}
+            onSignIn={() => props.onSignIn?.()}
           />
         )
       ) : (

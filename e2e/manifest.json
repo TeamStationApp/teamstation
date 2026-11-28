@@ -9172,6 +9172,258 @@
       "file": "e2e/tests/scoring/offline/eligible.e2e.ts"
     },
     {
+      "id": "scoring/plays/all-plays#imported",
+      "title": "A game's Plays tab streams its at-bats after Videos, opens each into its pitches, and keeps them for members",
+      "kind": "e2e",
+      "covers": [
+        "src/app/plays/**",
+        "src/app/screens/gameTabs.ts",
+        "src/app/screens/GameScreen.tsx",
+        "src/app/scoring/tailFollow.ts",
+        "src/app/components/usePinnedHead*.ts",
+        "src/app/screens/MembershipAccess.tsx",
+        "src/app/navigation/routes.ts",
+        "src/server/dev/fixtures/playsGame.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "plays-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 6,
+      "guards": [],
+      "faults": [
+        "api-500",
+        "hidden-element",
+        "blank-screen"
+      ],
+      "manual": false,
+      "spec": "scoring/plays/all-plays",
+      "file": "e2e/tests/scoring/plays/all-plays.e2e.ts"
+    },
+    {
+      "id": "scoring/plays/all-plays#members-only",
+      "title": "A game's Plays tab streams its at-bats after Videos, opens each into its pitches, and keeps them for members",
+      "kind": "e2e",
+      "covers": [
+        "src/app/plays/**",
+        "src/app/screens/gameTabs.ts",
+        "src/app/screens/GameScreen.tsx",
+        "src/app/scoring/tailFollow.ts",
+        "src/app/components/usePinnedHead*.ts",
+        "src/app/screens/MembershipAccess.tsx",
+        "src/app/navigation/routes.ts",
+        "src/server/dev/fixtures/playsGame.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "plays-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 6,
+      "guards": [],
+      "faults": [
+        "api-500",
+        "hidden-element",
+        "blank-screen"
+      ],
+      "manual": false,
+      "spec": "scoring/plays/all-plays",
+      "file": "e2e/tests/scoring/plays/all-plays.e2e.ts"
+    },
+    {
+      "id": "scoring/plays/all-plays#phone-final",
+      "title": "A game's Plays tab streams its at-bats after Videos, opens each into its pitches, and keeps them for members",
+      "kind": "e2e",
+      "covers": [
+        "src/app/plays/**",
+        "src/app/screens/gameTabs.ts",
+        "src/app/screens/GameScreen.tsx",
+        "src/app/scoring/tailFollow.ts",
+        "src/app/components/usePinnedHead*.ts",
+        "src/app/screens/MembershipAccess.tsx",
+        "src/app/navigation/routes.ts",
+        "src/server/dev/fixtures/playsGame.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "plays-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 6,
+      "guards": [],
+      "faults": [
+        "api-500",
+        "hidden-element",
+        "blank-screen"
+      ],
+      "manual": false,
+      "spec": "scoring/plays/all-plays",
+      "file": "e2e/tests/scoring/plays/all-plays.e2e.ts"
+    },
+    {
+      "id": "scoring/plays/all-plays#signed-out",
+      "title": "A game's Plays tab streams its at-bats after Videos, opens each into its pitches, and keeps them for members",
+      "kind": "e2e",
+      "covers": [
+        "src/app/plays/**",
+        "src/app/screens/gameTabs.ts",
+        "src/app/screens/GameScreen.tsx",
+        "src/app/scoring/tailFollow.ts",
+        "src/app/components/usePinnedHead*.ts",
+        "src/app/screens/MembershipAccess.tsx",
+        "src/app/navigation/routes.ts",
+        "src/server/dev/fixtures/playsGame.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "plays-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 6,
+      "guards": [],
+      "faults": [
+        "api-500",
+        "hidden-element",
+        "blank-screen"
+      ],
+      "manual": false,
+      "spec": "scoring/plays/all-plays",
+      "file": "e2e/tests/scoring/plays/all-plays.e2e.ts"
+    },
+    {
+      "id": "scoring/plays/all-plays#tab-address",
+      "title": "A game's Plays tab streams its at-bats after Videos, opens each into its pitches, and keeps them for members",
+      "kind": "e2e",
+      "covers": [
+        "src/app/plays/**",
+        "src/app/screens/gameTabs.ts",
+        "src/app/screens/GameScreen.tsx",
+        "src/app/scoring/tailFollow.ts",
+        "src/app/components/usePinnedHead*.ts",
+        "src/app/screens/MembershipAccess.tsx",
+        "src/app/navigation/routes.ts",
+        "src/server/dev/fixtures/playsGame.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "plays-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 6,
+      "guards": [],
+      "faults": [
+        "api-500",
+        "hidden-element",
+        "blank-screen"
+      ],
+      "manual": false,
+      "spec": "scoring/plays/all-plays",
+      "file": "e2e/tests/scoring/plays/all-plays.e2e.ts"
+    },
+    {
+      "id": "scoring/plays/all-plays#wide-final",
+      "title": "A game's Plays tab streams its at-bats after Videos, opens each into its pitches, and keeps them for members",
+      "kind": "e2e",
+      "covers": [
+        "src/app/plays/**",
+        "src/app/screens/gameTabs.ts",
+        "src/app/screens/GameScreen.tsx",
+        "src/app/scoring/tailFollow.ts",
+        "src/app/components/usePinnedHead*.ts",
+        "src/app/screens/MembershipAccess.tsx",
+        "src/app/navigation/routes.ts",
+        "src/server/dev/fixtures/playsGame.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "plays-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 6,
+      "guards": [],
+      "faults": [
+        "api-500",
+        "hidden-element",
+        "blank-screen"
+      ],
+      "manual": false,
+      "spec": "scoring/plays/all-plays",
+      "file": "e2e/tests/scoring/plays/all-plays.e2e.ts"
+    },
+    {
       "id": "streaming/basic/four-synthetic#scrub",
       "title": "Four synthetic cameras stream live to an iPhone, an Android phone, Chrome, TeamStation TV and iPhone Safari for 30 minutes of scrubbing, every angle moving, recovering and aligned, with no memory growth",
       "kind": "e2e",
