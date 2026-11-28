@@ -159,6 +159,25 @@ export function chainBackError(
   return 'He can go back only once the runner behind him is out.'
 }
 
+/**
+ * Why the chain runner `playerId` may not be called out yet. A ground double
+ * play's runner headed home is decided first, as the game decides a lead
+ * runner headed home before any other runner of the play.
+ */
+export function chainOutError(
+  state: Pick<ScoringSnapshot, 'runnerChain'>,
+  playerId: number
+): string | undefined {
+  const chain = state.runnerChain
+  if (chain == null || chain.dragged != null) return undefined
+  const runner = chain.pushed.find(item => item.playerId === playerId)
+  const home = chain.pushed.find(item => item.to === 4)
+  if (runner == null || home == null || runner === home) return undefined
+  return home.decision == null
+    ? 'Decide the runner headed home first'
+    : undefined
+}
+
 /** The chain's runner `playerId`, when a chain is open and he is in it. */
 export function chainRunner(
   state: Pick<ScoringSnapshot, 'runnerChain'>,

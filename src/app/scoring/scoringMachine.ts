@@ -33,12 +33,14 @@ import {
   stealsByBase
 } from './dictatedCompletion'
 import { advanceReel, beginReel, ReelBuilder } from './dictatedReel'
+import { continueDoublePlay } from './doublePlay'
 import { moreEligibility, moreReducer } from './moreActions'
 import { overrideActions } from './overrideModel'
 import {
   chainAhead,
   chainAllowed,
   chainBackError,
+  chainOutError,
   chainRunner
 } from './runnerChain'
 import {
@@ -764,6 +766,7 @@ function reduce(state: ScoringState, event: ScoringEvent): ScoringState {
     }
     settleRunners(next)
     throwOutAtFirst(next)
+    continueDoublePlay(next)
     return next
   }
   // Above the presentation guard, so a sentence spoken mid-animation is told
@@ -1134,14 +1137,47 @@ function chainDecide(
   )
     return state
   const name = state.session.gameData.players[event.id].fullName
+  // A ground double play already stood its runners on the next base.
+  const advanced = state.runnerChain!.dragged == null
   if (event.decision === 'back')
     return chainBackError(state, event.id) != null
       ? state
       : accepted(state, `Back ${name}`, next => {
-          chainRunner(next, event.id)!.decision = 'back'
+          const chained = chainRunner(next, event.id)!
+          chained.decision = 'back'
+          if (advanced)
+            chained.action =
+              runner.to === 4
+                ? {
+                    type: 'runnerMovement',
+                    runner: event.id,
+                    to: '3B',
+                    reason: 'Back'
+                  }
+                : {
+                    type: 'runnerMovement',
+                    runner: event.id,
+                    to: destination(runner.from)
+                  }
           next.phase = 'runnerMovement'
           settleRunners(next)
         })
+  if (event.decision === 'out' && chainOutError(state, event.id) != null)
+    return state
+  // Safe keeps that advance: the runner headed home scores.
+  if (event.decision === 'safe' && advanced)
+    return accepted(state, `Safe ${name}`, next => {
+      const chained = chainRunner(next, event.id)!
+      chained.decision = 'safe'
+      if (runner.to === 4)
+        chained.action = {
+          type: 'runnerMovement',
+          runner: event.id,
+          to: 'home'
+        }
+      next.phase = 'runnerMovement'
+      settleRunners(next)
+    })
   const proposed: ScoringState = {
     ...state,
     phase: 'runnerDecision',
