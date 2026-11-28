@@ -9,6 +9,7 @@ import {
   effectiveAvailability
 } from '../../common/fieldAvailability'
 import { calendarDateText } from '../../common/groupCreation'
+import { namedTeamIds, OPEN_SIDE_NAME } from '../../common/openSides'
 import { asFieldSize, asWeeklyHours, fieldSizeLabel } from '../../common/venues'
 import { asWindowPeriods } from '../../common/windowPeriods'
 import type { Database, GamesTable } from '../db/database'
@@ -317,11 +318,14 @@ export async function refreshFieldWarnings(
       await recordNotice(db, {
         type: 'fieldWarning',
         actorId: null,
-        recipients: await schedulingRecipients(db, [
-          { kind: 'team', id: game.home_team_id },
-          { kind: 'team', id: game.away_team_id }
-        ]),
-        title: `Field warning: ${names.get(game.away_team_id) ?? 'Away'} at ${names.get(game.home_team_id) ?? 'Home'}`,
+        recipients: await schedulingRecipients(
+          db,
+          namedTeamIds(game.home_team_id, game.away_team_id).map(id => ({
+            kind: 'team' as const,
+            id
+          }))
+        ),
+        title: `Field warning: ${sideName(names, game.away_team_id, 'Away')} at ${sideName(names, game.home_team_id, 'Home')}`,
         description: `${warning.message} ${eventLocalRange(
           game.start_at.toISOString(),
           game.end_at?.toISOString(),
@@ -331,4 +335,14 @@ export async function refreshFieldWarnings(
       })
     }
   }
+}
+
+/** A side's team name for a notice: TBD for an open side. */
+function sideName(
+  names: ReadonlyMap<string, string>,
+  teamId: string | null,
+  fallback: string
+): string {
+  if (teamId == null) return OPEN_SIDE_NAME
+  return names.get(teamId) ?? fallback
 }

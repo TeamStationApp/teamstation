@@ -738,6 +738,7 @@ describe('approved games and shared schedule ownership', function () {
         .selectFrom('games')
         .select(['home_team_id', 'away_team_id', 'currentPlay'])
         .where('id', '=', gameId)
+        .$narrowType<{ home_team_id: string; away_team_id: string }>()
         .executeTakeFirstOrThrow()
 
     /** 104 keeps team A's score and schedules neither team. */

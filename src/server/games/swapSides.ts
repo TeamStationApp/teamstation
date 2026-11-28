@@ -14,6 +14,7 @@ import { recordIn } from '../events/wireRecords'
 import { notifyGameChange, notifyPlaysChanged } from '../socket/gameChanges'
 import { noteGameFigures } from '../socket/syncRevision'
 import { gameHasPlays } from './fenceDistance'
+import { requireNamedSides } from './namedSides'
 
 export const SWAP_REFUSED =
   'Home and away can be swapped only before the first pitch'
@@ -54,13 +55,14 @@ export async function swapGameSides(
   trx: Transaction<Database>,
   gameId: string
 ): Promise<string> {
-  const game = await trx
+  const found = await trx
     .selectFrom('games')
     .selectAll()
     .where('id', '=', gameId)
     .forUpdate()
     .executeTakeFirst()
-  if (game == null) throw notFound()
+  if (found == null) throw notFound()
+  const game = requireNamedSides(found)
   if (!(await maySwapSides(trx, game))) throw conflict(SWAP_REFUSED)
   const before = teamsOfRow(game)
   const teams = {

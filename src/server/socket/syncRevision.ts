@@ -1,5 +1,6 @@
 import { type Kysely, sql } from 'kysely'
 
+import { namedTeamIds } from '../../common/openSides'
 import type { Database } from '../db/database'
 
 /**
@@ -105,10 +106,10 @@ export function noteScopeChange(
   else list.push(ids)
 }
 
-/** A game's teams and season, as a row names them. */
+/** A game's teams and season, as a row names them; a null side is open. */
 export interface GameFigureIds {
-  home_team_id: string
-  away_team_id: string
+  home_team_id: string | null
+  away_team_id: string | null
   season_id: string | null
 }
 
@@ -138,8 +139,8 @@ export async function noteGameFigures(
     .executeTakeFirst()
   for (const row of [before, now]) {
     if (row == null) continue
-    noteScopeChange(trx, { teamId: row.home_team_id })
-    noteScopeChange(trx, { teamId: row.away_team_id })
+    for (const teamId of namedTeamIds(row.home_team_id, row.away_team_id))
+      noteScopeChange(trx, { teamId })
     if (row.season_id != null) noteScopeChange(trx, { seasonId: row.season_id })
   }
 }

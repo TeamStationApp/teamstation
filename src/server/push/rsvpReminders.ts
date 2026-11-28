@@ -1,6 +1,7 @@
 import { type Kysely, type Selectable, sql } from 'kysely'
 
 import { eventName } from '../../common/eventInfo'
+import { namedTeamIds } from '../../common/openSides'
 import type { EventReminder } from '../../common/push'
 import { onePeople } from '../admin/people'
 import { anyOf } from '../db/anyOf'
@@ -64,7 +65,7 @@ function gameEvent(game: GameRow): DueEvent {
     id: game.id,
     startAt: game.start_at,
     timezone: game.timezone,
-    teamIds: [game.home_team_id, game.away_team_id],
+    teamIds: namedTeamIds(game.home_team_id, game.away_team_id),
     title: null
   }
 }

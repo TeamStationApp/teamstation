@@ -3,6 +3,7 @@ import { type Kysely, type RawBuilder, sql } from 'kysely'
 import { badRequest, forbidden, notFound } from '../../common/errors'
 import { storedGuests } from '../../common/guests'
 import { type NamedPerson, shortParts } from '../../common/names'
+import { namedTeamIds } from '../../common/openSides'
 import {
   DEFAULT_PLAYER_NAME_PRIVACY,
   type PlayerNamePrivacy
@@ -179,8 +180,9 @@ export interface CandidateTarget {
   gameSeasonId: string | null
   game: {
     id: string
-    home_team_id: string
-    away_team_id: string
+    /** Null for an open side, whose team is not known yet. */
+    home_team_id: string | null
+    away_team_id: string | null
     guests: unknown
   } | null
 }
@@ -219,18 +221,14 @@ export async function candidateTarget(
   )
     throw badRequest('forTeam must play in forGame')
   const roles = await roleScopes(db, actor.userId, actor.isAdmin)
+  const gameTeams =
+    game == null ? [] : namedTeamIds(game.home_team_id, game.away_team_id)
   const allowed =
-    canManageRoster(roles, teamId) ||
-    (game != null &&
-      (canScore(roles, game.home_team_id) ||
-        canScore(roles, game.away_team_id)))
+    canManageRoster(roles, teamId) || gameTeams.some(id => canScore(roles, id))
   if (!allowed) {
     const seen = await visibleScopes(db, actor.userId, actor.isAdmin)
     const sees =
-      canSeeTeam(seen, teamId) ||
-      (game != null &&
-        (canSeeTeam(seen, game.home_team_id) ||
-          canSeeTeam(seen, game.away_team_id)))
+      canSeeTeam(seen, teamId) || gameTeams.some(id => canSeeTeam(seen, id))
     // A team read in the non-member view is one the caller can see too.
     if (!sees && !(await nonMemberTeam(db, actor, seen, teamId)))
       throw notFound()
@@ -254,7 +252,7 @@ export function heldSql(target: CandidateTarget): RawBuilder<unknown> {
   const inGame =
     target.game == null
       ? []
-      : [target.game.home_team_id, target.game.away_team_id]
+      : namedTeamIds(target.game.home_team_id, target.game.away_team_id)
   const guests =
     target.game == null
       ? null

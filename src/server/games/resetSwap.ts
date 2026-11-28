@@ -12,6 +12,7 @@ import type { Database, GamesTable } from '../db/database'
 import { gamePlaysDigest, lineupsBefore } from '../events/postPlays'
 import { notifyGameChange, notifyPlaysChanged } from '../socket/gameChanges'
 import { requestGameStats } from '../statsBuilder/request'
+import { type NamedSides, requireNamedSides } from './namedSides'
 import { gameSwapEffect } from './swapEffect'
 import { SWAP_REFUSED, swapGameSides } from './swapSides'
 
@@ -23,19 +24,21 @@ export { WITHDRAWN_GAME }
 /** The players a scorer added to a play by hand, which a reset keeps too. */
 const HAND_ADDED = ['fielder', 'catcher', 'scorer'] as const
 
-/** The game row a reset reads, as the swap route locked it. */
-type GameRow = Selectable<GamesTable>
+/** The game row a reset reads, as the swap route locked it: sides named. */
+type GameRow = NamedSides<Selectable<GamesTable>>
 
 async function lockedGame(
   trx: Kysely<Database>,
   gameId: string
 ): Promise<GameRow> {
-  return await trx
-    .selectFrom('games')
-    .selectAll()
-    .where('id', '=', gameId)
-    .forUpdate()
-    .executeTakeFirstOrThrow()
+  return requireNamedSides(
+    await trx
+      .selectFrom('games')
+      .selectAll()
+      .where('id', '=', gameId)
+      .forUpdate()
+      .executeTakeFirstOrThrow()
+  )
 }
 
 /**
@@ -201,7 +204,7 @@ export async function swapOrReset(
 /** What the audit row says of the game, before and after. */
 function figures(
   game: Pick<
-    GameRow,
+    Selectable<GamesTable>,
     | 'home_team_id'
     | 'away_team_id'
     | 'status'

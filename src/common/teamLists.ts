@@ -1,3 +1,4 @@
+import { wireSideId } from './openSides'
 import type { SideTeams } from './scoring/teamRecord'
 
 /**
@@ -41,10 +42,17 @@ export function listsByTeam<T>(
   return { [teams.away.id]: lists.away, [teams.home.id]: lists.home }
 }
 
-/** A game row's teams, by side. */
+/**
+ * A game row's teams, by side. An open side (a null team, not known yet) is
+ * the id `''`, which no stored list is under: it has no guests and no players
+ * left off, and a write fills it with a team before it stores any.
+ */
 export function teamsOfRow(game: {
-  home_team_id: string
-  away_team_id: string
+  home_team_id: string | null
+  away_team_id: string | null
 }): SideTeams {
-  return { away: { id: game.away_team_id }, home: { id: game.home_team_id } }
+  return {
+    away: { id: wireSideId(game.away_team_id) },
+    home: { id: wireSideId(game.home_team_id) }
+  }
 }

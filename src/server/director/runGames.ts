@@ -1,5 +1,10 @@
-import type { Kysely } from 'kysely'
+import { type Kysely, sql } from 'kysely'
 
+import {
+  namedTeamIds,
+  OPEN_SIDE_NAME,
+  wireSideId
+} from '../../common/openSides'
 import type { AdminScopes } from '../access'
 import type { Database } from '../db/database'
 
@@ -13,30 +18,36 @@ import type { Database } from '../db/database'
 /** Whether these scopes run a game: a site admin, or either team's admin. */
 export function mayRunGame(
   scopes: AdminScopes,
-  game: { homeTeamId: string; awayTeamId: string }
+  game: { homeTeamId: string | null; awayTeamId: string | null }
 ): boolean {
   return (
     scopes.isAdmin ||
-    scopes.teamIds.has(game.homeTeamId) ||
-    scopes.teamIds.has(game.awayTeamId)
+    namedTeamIds(game.homeTeamId, game.awayTeamId).some(teamId =>
+      scopes.teamIds.has(teamId)
+    )
   )
 }
 
 // The query's type is what Kysely infers; written out it would be a page.
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 function gamesWithTeams(db: Kysely<Database>) {
+  // An open side joins no team: it is TBD, with the id `''`.
   return db
     .selectFrom('games')
-    .innerJoin('teams as home', 'home.id', 'games.home_team_id')
-    .innerJoin('teams as away', 'away.id', 'games.away_team_id')
+    .leftJoin('teams as home', 'home.id', 'games.home_team_id')
+    .leftJoin('teams as away', 'away.id', 'games.away_team_id')
     .select([
       'games.id as id',
       'games.start_at as startAt',
       'games.venue as venue',
-      'games.home_team_id as homeTeamId',
-      'games.away_team_id as awayTeamId',
-      'home.name as homeTeamName',
-      'away.name as awayTeamName',
+      sql<string>`coalesce(games.home_team_id, ${wireSideId(null)})`.as(
+        'homeTeamId'
+      ),
+      sql<string>`coalesce(games.away_team_id, ${wireSideId(null)})`.as(
+        'awayTeamId'
+      ),
+      sql<string>`coalesce(home.name, ${OPEN_SIDE_NAME})`.as('homeTeamName'),
+      sql<string>`coalesce(away.name, ${OPEN_SIDE_NAME})`.as('awayTeamName'),
       'home.logo_path as homeLogoPath',
       'away.logo_path as awayLogoPath'
     ])

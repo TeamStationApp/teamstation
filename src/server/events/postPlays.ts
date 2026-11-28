@@ -49,6 +49,7 @@ import { lockGameTeams } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database, EventsTable } from '../db/database'
 import { resolvedFenceDistance } from '../games/fenceDistance'
+import { requireNamedSides } from '../games/namedSides'
 import { scoringActivitySql } from '../games/scoringActivity'
 import { radarSettings } from '../nodeSettings'
 import { assertStoredScoringRoles } from '../scoring/mergeConflicts'
@@ -298,7 +299,7 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
     // The game row stays locked until this post commits, so a second
     // post to the same game waits and then sees the plays, the final
     // status and the scoring owner this one leaves behind.
-    const game = await trx
+    const row = await trx
       .selectFrom('games')
       .select([
         'home_team_id',
@@ -326,7 +327,8 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
       .where('id', '=', gameId)
       .forUpdate()
       .executeTakeFirst()
-    if (game == null) throw notFound()
+    if (row == null) throw notFound()
+    const game = requireNamedSides(row)
     // Stored by team: a record posted by side, as an app not yet updated
     // sends it, is turned to the game's teams.
     const body = bodyFromWire(sentBody, teamsOfRow(game))
@@ -1587,8 +1589,8 @@ export interface ListFields {
   linescore: unknown
   currentPlay: unknown
   start_at: Date
-  home_team_id: string
-  away_team_id: string
+  home_team_id: string | null
+  away_team_id: string | null
   venue: string | null
   field_id: string | null
   cancellation_reason: string | null

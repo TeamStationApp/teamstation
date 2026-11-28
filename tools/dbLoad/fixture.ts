@@ -695,7 +695,8 @@ class Seeder {
         ? ids.map(() => null)
         : await this.placeGames(
             from.season_id,
-            [from.home_team_id, from.away_team_id],
+            // The load fixture schedules every game with both its teams.
+            [from.home_team_id!, from.away_team_id!],
             count
           )
     const columns = await columnsOf(this.db, 'games', [

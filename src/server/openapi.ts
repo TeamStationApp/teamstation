@@ -12,6 +12,7 @@ import {
   POSITION_CODES,
   STORED_EVENT_TYPES
 } from '../common/gumbo/reference'
+import { OPEN_SIDE_NAME } from '../common/openSides'
 import {
   JERSEY_MAX_LENGTH,
   PLAYER_NAME_MAX_LENGTH,
@@ -938,6 +939,16 @@ const accountPaths = {
 }
 
 /**
+ * What every schedule and game answer says of a side whose team is not known
+ * yet (`common/openSides.ts`).
+ */
+const OPEN_SIDE_DOC =
+  "A game's side may be open: its team is not known yet. Every schedule and " +
+  "game answer gives an open side the team id `''` and the name `" +
+  OPEN_SIDE_NAME +
+  "` (an external team with no logo), and lists of a game's teams leave it out."
+
+/**
  * The API's own description, served at `/api/v1/openapi.json`.
  *
  * It is written by hand rather than generated, because the cleaners describe
@@ -945,6 +956,7 @@ const accountPaths = {
  * apart means a careless change to a cleaner cannot silently rewrite the
  * contract. The route tests check the two agree.
  */
+
 export interface OpenApiDocument {
   openapi: string
   info: { title: string; version: string; description: string }
@@ -2364,7 +2376,8 @@ export function openApiDocument(version: string): OpenApiDocument {
         'answers with the same shape, and every request and response is ' +
         'checked by a cleaner on both sides. Requests share account and IP rate limits. ' +
         'A 429 rateLimited response from the API traffic limiter gives the wait in ' +
-        'seconds in Retry-After and details.retryAfterSec.'
+        'seconds in Retry-After and details.retryAfterSec. ' +
+        OPEN_SIDE_DOC
     },
     servers: [{ url: '/api/v1' }],
     components: {
@@ -4949,7 +4962,8 @@ export function openApiDocument(version: string): OpenApiDocument {
           responses: {
             200: {
               description:
-                '`Page` of the same rows with `paged`. Games, newest first, with a video count. Authorized team views also include playerRsvps {yes,unknown,no}, counting active current team players only; unknown combines Maybe and No reply. Pending proposals and non-member views omit playerRsvps.'
+                '`Page` of the same rows with `paged`. Games, newest first, with a video count. Authorized team views also include playerRsvps {yes,unknown,no}, counting active current team players only; unknown combines Maybe and No reply. Pending proposals and non-member views omit playerRsvps. ' +
+                OPEN_SIDE_DOC
             },
             400: errorResponse,
             401: errorResponse,
@@ -5626,6 +5640,7 @@ export function openApiDocument(version: string): OpenApiDocument {
         get: {
           summary: 'One game and its videos',
           description:
+            `${OPEN_SIDE_DOC} ` +
             '`fenceDistanceFt` is the fence the game is played to, in feet: ' +
             "the game's own, else its season's, else that season's " +
             "league's, else 200. A game with plays keeps the fence it had " +
@@ -11733,6 +11748,7 @@ export function openApiDocument(version: string): OpenApiDocument {
         get: {
           summary: 'Games and team events, filtered by the query string',
           description:
+            `${OPEN_SIDE_DOC} ` +
             'The one list. `scope=visible` (the default) is every game you ' +
             'may see: your teams, and every game of a season opened to you. ' +
             'A site administrator sees every game. `scope=run` is every game ' +

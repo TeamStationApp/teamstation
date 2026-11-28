@@ -1,15 +1,19 @@
 import { userIdOfGumbo } from '../common/userId'
 import { type UmpireRouteOptions, umpireRoutes } from '../server/routes/umpires'
+import type { MountExtra } from './accountHarness'
 import { type GroupFixture, groupFixture } from './groupFixtures'
 import { seedUmpireCounts, seedUmpireTypes } from './umpireTypes'
 
 export const UMPIRE_TEST_NOW = '2027-04-01T12:00:00Z'
 /** `options` are the umpire routes': `push` queues a notice's push. */
 export async function umpireFixture(
-  options: UmpireRouteOptions = {}
+  options: UmpireRouteOptions = {},
+  /** More routes to mount beside the umpire routes. */
+  mountExtra?: MountExtra
 ): Promise<GroupFixture> {
-  const f = await groupFixture(undefined, undefined, (app, { db, media }) => {
-    app.use('/api/v1', umpireRoutes(db, media, options))
+  const f = await groupFixture(undefined, undefined, (app, fixture) => {
+    app.use('/api/v1', umpireRoutes(fixture.db, fixture.media, options))
+    mountExtra?.(app, fixture)
   })
   await seedUmpireTypes(f.h.db, f.leagueA)
   const user = userIdOfGumbo(101)

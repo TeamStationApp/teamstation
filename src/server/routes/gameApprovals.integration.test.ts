@@ -353,6 +353,7 @@ describe('swapping home and away from the scoring screen', function () {
       .selectFrom('games')
       .select(['home_team_id', 'away_team_id', 'currentPlay'])
       .where('id', '=', gameId)
+      .$narrowType<{ home_team_id: string; away_team_id: string }>()
       .executeTakeFirstOrThrow()
   /** The menu's swap, naming the sides the game has now unless told others. */
   const swap = async (

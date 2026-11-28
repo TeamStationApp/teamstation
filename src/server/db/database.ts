@@ -332,8 +332,8 @@ export interface GamesTable {
   withdrawn_by_user_id: Generated<string | null>
   withdrawn_at: Timestamp | null
   id: string
-  home_team_id: string
-  away_team_id: string
+  home_team_id: string | null
+  away_team_id: string | null
   season_id: string | null
   start_at: Timestamp
   venue: string | null

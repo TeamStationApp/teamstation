@@ -9,9 +9,11 @@ import type {
 import { conflict } from '../../common/errors'
 import { DEFAULT_EVENT_DURATION_MS } from '../../common/eventTime'
 import type { GameRequestTerms } from '../../common/gameApprovals'
+import { wireSideId } from '../../common/openSides'
 import type { ExistingGames } from '../../common/schedulePreviews'
 import { asFieldSize, type FieldSize } from '../../common/venues'
 import type { Database } from '../db/database'
+import { hasNamedSides } from '../games/namedSides'
 import type { Clock } from '../groups/requests'
 import { scheduleSetup } from '../scheduler/setup'
 import { rowsOfPeople, survivors } from '../teams/teamStaff'
@@ -80,8 +82,9 @@ export async function leagueTeamIds(
 
 interface GameRow {
   id: string
-  home_team_id: string
-  away_team_id: string
+  /** Null for an open side, which holds no team's time. */
+  home_team_id: string | null
+  away_team_id: string | null
   season_id: string | null
   start_at: Date
   end_at: Date | null
@@ -290,6 +293,8 @@ export async function snapshot(
       ? games
           .filter(
             game =>
+              // A game with an open side is no own teams' game to replace.
+              hasNamedSides(game) &&
               upcoming(game, now) &&
               ownTeams.has(game.home_team_id) &&
               ownTeams.has(game.away_team_id) &&
@@ -306,8 +311,9 @@ export async function snapshot(
       .map(game => ({
         key: game.id,
         seasonId: game.season_id!,
-        homeTeamId: game.home_team_id,
-        awayTeamId: game.away_team_id,
+        // An open side holds no team's time: `''` is no team of the run.
+        homeTeamId: wireSideId(game.home_team_id),
+        awayTeamId: wireSideId(game.away_team_id),
         exhibition: game.exhibition,
         fieldId: game.field_id,
         size: sizeOf(game.field_size),
@@ -346,8 +352,8 @@ export async function snapshot(
             .map(game => ({
               key: `replaced:${game.id}`,
               seasonId: game.season_id!,
-              homeTeamId: game.home_team_id,
-              awayTeamId: game.away_team_id,
+              homeTeamId: wireSideId(game.home_team_id),
+              awayTeamId: wireSideId(game.away_team_id),
               exhibition: game.exhibition
             }))
         ]
@@ -357,7 +363,7 @@ export async function snapshot(
       ...fixed.flatMap(game => [game.homeTeamId, game.awayTeamId]),
       ...(required ?? []).flatMap(game => [game.homeTeamId, game.awayTeamId])
     ])
-  ]
+  ].filter(teamId => teamId !== wireSideId(null))
   const avoidHeadCoachConflicts =
     request.avoidHeadCoachConflicts ?? setup.avoidHeadCoachConflicts ?? true
   const headCoaches = avoidHeadCoachConflicts

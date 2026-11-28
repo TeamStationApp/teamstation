@@ -17,6 +17,11 @@ import {
 } from '../../common/api'
 import { badRequest, notFound, unauthorized } from '../../common/errors'
 import { gameCalendarDay } from '../../common/gameTime'
+import {
+  namedTeamIds,
+  OPEN_SIDE_NAME,
+  wireSideId
+} from '../../common/openSides'
 import { canFilm, canSeeGame, roleScopes, visibleScopes } from '../access'
 import { lockKeys } from '../db/advisoryLocks'
 import type { Database } from '../db/database'
@@ -122,8 +127,9 @@ const asNewStream = asObject({
 
 interface GameRow {
   id: string
-  homeTeamId: string
-  awayTeamId: string
+  /** Null for an open side, whose team is not known yet. */
+  homeTeamId: string | null
+  awayTeamId: string | null
   seasonId: string | null
   startAt: Date
   /** Its own zone, in which it has a calendar day. */
@@ -153,7 +159,7 @@ export function liveRoutes(
     const scopes = await roleScopes(db, userId, isAdmin)
     // Home first: when somebody films both teams of a friendly, the stream
     // belongs to the side the game is listed under.
-    for (const teamId of [game.homeTeamId, game.awayTeamId]) {
+    for (const teamId of namedTeamIds(game.homeTeamId, game.awayTeamId)) {
       if (canFilm(scopes, teamId)) return { game, teamId }
     }
     // 404, not 403: whether a game exists is not something to confirm to
@@ -252,12 +258,12 @@ export function liveRoutes(
       const visible = await visibleScopes(db, actor.userId, actor.isAdmin)
       if (game == null || !canSeeGame(visible, game)) throw notFound()
       const scopes = await roleScopes(db, actor.userId, actor.isAdmin)
-      const films = [game.homeTeamId, game.awayTeamId].some(teamId =>
-        canFilm(scopes, teamId)
-      )
-      const teamId = visible.teamIds.has(game.homeTeamId)
-        ? game.homeTeamId
-        : game.awayTeamId
+      const sideTeams = namedTeamIds(game.homeTeamId, game.awayTeamId)
+      const films = sideTeams.some(teamId => canFilm(scopes, teamId))
+      // The side the viewer belongs to, home first; else the last named one.
+      // A game with both sides open has no team to ask.
+      const teamId =
+        sideTeams.find(id => visible.teamIds.has(id)) ?? sideTeams.at(-1)
       const now = new Date()
       const upcoming =
         gameCalendarDay(game.startAt.toISOString(), game.timezone) >=
@@ -268,9 +274,11 @@ export function liveRoutes(
           canRequest:
             !films &&
             upcoming &&
+            teamId != null &&
             visible.teamIds.has(teamId) &&
             (await isFullTeam(db, teamId)),
           requested:
+            teamId != null &&
             (await waitingOwnRequest(
               db,
               'videographer',
@@ -278,7 +286,7 @@ export function liveRoutes(
               teamId,
               now
             )) != null,
-          teamId
+          teamId: wireSideId(teamId ?? null)
         })
       )
     })
@@ -854,8 +862,9 @@ export function liveRoutes(
       const rows = await db
         .selectFrom('videos')
         .innerJoin('games', 'games.id', 'videos.game_id')
-        .innerJoin('teams as home', 'home.id', 'games.home_team_id')
-        .innerJoin('teams as away', 'away.id', 'games.away_team_id')
+        // An open side joins no team: it is TBD.
+        .leftJoin('teams as home', 'home.id', 'games.home_team_id')
+        .leftJoin('teams as away', 'away.id', 'games.away_team_id')
         .select([
           'videos.id as videoId',
           'videos.title as title',
@@ -897,10 +906,10 @@ export function liveRoutes(
             videoId: row.videoId,
             gameId: row.gameId,
             title: row.title,
-            homeTeamId: row.homeTeamId,
-            awayTeamId: row.awayTeamId,
-            homeTeamName: row.homeTeamName,
-            awayTeamName: row.awayTeamName,
+            homeTeamId: wireSideId(row.homeTeamId),
+            awayTeamId: wireSideId(row.awayTeamId),
+            homeTeamName: row.homeTeamName ?? OPEN_SIDE_NAME,
+            awayTeamName: row.awayTeamName ?? OPEN_SIDE_NAME,
             startedAt:
               row.startedAt == null
                 ? null
@@ -1211,10 +1220,11 @@ async function loadGame(
   db: Kysely<Database>,
   gameId: string
 ): Promise<GameRow | undefined> {
+  // An open side joins no team: it is TBD.
   const row = await db
     .selectFrom('games')
-    .innerJoin('teams as home', 'home.id', 'games.home_team_id')
-    .innerJoin('teams as away', 'away.id', 'games.away_team_id')
+    .leftJoin('teams as home', 'home.id', 'games.home_team_id')
+    .leftJoin('teams as away', 'away.id', 'games.away_team_id')
     .select([
       'games.id as id',
       'games.home_team_id as homeTeamId',
@@ -1228,7 +1238,12 @@ async function loadGame(
     .where('games.id', '=', gameId)
     .executeTakeFirst()
   if (row == null) return undefined
-  return { ...row, startAt: new Date(row.startAt) }
+  return {
+    ...row,
+    homeTeamName: row.homeTeamName ?? OPEN_SIDE_NAME,
+    awayTeamName: row.awayTeamName ?? OPEN_SIDE_NAME,
+    startAt: new Date(row.startAt)
+  }
 }
 
 function pathParam(value: string | string[] | undefined): string {

@@ -119,8 +119,11 @@ describe('migrations', function () {
     expect(second.alreadyApplied.length).equals(migrations.length)
   })
 
-  it('rolls back the sponsor features, the scoreboard late rows index, the umpire notifications, the refresh notices, the umpire sort, the dropped chat age columns, the umpire availability, the hidden chat history, the league umpire chat, the age bands, the group coordinates, the solver limit, the push notifications, the covered administrators, the imported records, scheduling and device sessions, then scoring authorship and the statistics rebuild before scoring mutation and game plans', async () => {
+  it('rolls back the open game sides, the sponsor features, the scoreboard late rows index, the umpire notifications, the refresh notices, the umpire sort, the dropped chat age columns, the umpire availability, the hidden chat history, the league umpire chat, the age bands, the group coordinates, the solver limit, the push notifications, the covered administrators, the imported records, scheduling and device sessions, then scoring authorship and the statistics rebuild before scoring mutation and game plans', async () => {
     await migrateUp(pool, migrations)
+    expect(await migrateDown(pool, migrations)).deep.equals([
+      '132openGameSides'
+    ])
     expect(await migrateDown(pool, migrations)).deep.equals([
       '131sponsorFeatures'
     ])
@@ -356,6 +359,42 @@ describe('migrations', function () {
       .reverse()
     expect(await migrateDown(pool, migrations, left.length)).deep.equals(left)
     expect(await schemaSnapshot(pool)).deep.equals(before)
+    await migrateUp(pool, migrations)
+  })
+
+  it("leaves a game's side open with 132, and refuses to go down while one is", async () => {
+    await migrateUp(pool, migrations)
+    const required = async (): Promise<string[]> =>
+      (
+        await pool.query<{ column_name: string }>(
+          `select column_name from information_schema.columns
+          where table_name = 'games' and column_name in ('home_team_id', 'away_team_id')
+            and is_nullable = 'NO' order by 1`
+        )
+      ).rows.map(row => row.column_name)
+    expect(await required()).deep.equals([])
+    await pool.query(
+      `insert into teams(id, name) values ('tem_open_sides', 'Demo Open Sides')`
+    )
+    await pool.query(
+      `insert into games(id, home_team_id, away_team_id, start_at)
+      values ('gam_open_sides', 'tem_open_sides', null, now())`
+    )
+    const refused = await migrateDown(pool, migrations).then(
+      () => undefined,
+      (error: unknown) => error
+    )
+    expect(refused)
+      .instanceOf(Error)
+      .property('message')
+      .includes('Games with an open side remain')
+    expect(await required()).deep.equals([])
+    await pool.query(`delete from games where id = 'gam_open_sides'`)
+    await pool.query(`delete from teams where id = 'tem_open_sides'`)
+    expect(await migrateDown(pool, migrations)).deep.equals([
+      '132openGameSides'
+    ])
+    expect(await required()).deep.equals(['away_team_id', 'home_team_id'])
     await migrateUp(pool, migrations)
   })
 
@@ -733,7 +772,8 @@ for (const history of ['oauth', 'chat', 'deployed'] as const) {
           '130refreshNotices',
           '130umpireNotifications',
           '131scoreboardLateRows',
-          '131sponsorFeatures'
+          '131sponsorFeatures',
+          '132openGameSides'
         ])
       expect(result.alreadyApplied).deep.equals(priorNames)
       const { rows } = await pool.query(

@@ -8,6 +8,7 @@ import {
   type GroupRef
 } from '../../common/groupCreation'
 import { asLocality } from '../../common/locality'
+import { OPEN_SIDE_NAME, wireSideId } from '../../common/openSides'
 import {
   asPlayingTimeRules,
   type PlayingTimeRules
@@ -198,10 +199,11 @@ export async function publicGames(
   ref: GroupRef,
   actor?: Actor
 ): Promise<PublicGame[]> {
+  // An open side joins no team: it is TBD (`common/openSides.ts`).
   let query = db
     .selectFrom('games')
-    .innerJoin('teams as home', 'home.id', 'games.home_team_id')
-    .innerJoin('teams as away', 'away.id', 'games.away_team_id')
+    .leftJoin('teams as home', 'home.id', 'games.home_team_id')
+    .leftJoin('teams as away', 'away.id', 'games.away_team_id')
     .leftJoin(
       'teams as withdrawn',
       'withdrawn.id',
@@ -280,8 +282,14 @@ export async function publicGames(
     id: row.id,
     isUmpire: umpiring.has(row.id),
     videoCount: counts.get(row.id) ?? 0,
-    homeTeam: { id: row.home_team_id, name: row.homeName },
-    awayTeam: { id: row.away_team_id, name: row.awayName },
+    homeTeam: {
+      id: wireSideId(row.home_team_id),
+      name: row.homeName ?? OPEN_SIDE_NAME
+    },
+    awayTeam: {
+      id: wireSideId(row.away_team_id),
+      name: row.awayName ?? OPEN_SIDE_NAME
+    },
     seasonId: row.season_id,
     startAt: row.start_at.toISOString(),
     endAt: row.end_at?.toISOString() ?? null,
@@ -295,8 +303,8 @@ export async function publicGames(
     venue: row.venue,
     exhibition: row.exhibition,
     timezone: row.timezone,
-    homeTeamExternal: row.homeKind === 'external',
-    awayTeamExternal: row.awayKind === 'external',
+    homeTeamExternal: (row.homeKind ?? 'external') === 'external',
+    awayTeamExternal: (row.awayKind ?? 'external') === 'external',
     status: row.status,
     homeScore: row.home_score,
     awayScore: row.away_score,

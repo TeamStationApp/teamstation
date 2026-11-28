@@ -2,6 +2,7 @@ import { type Kysely, sql } from 'kysely'
 
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
+import { requireNamedSides } from '../games/namedSides'
 import { notifyPlaysChanged } from '../socket/gameChanges'
 import { noteScopeChange } from '../socket/syncRevision'
 import { requestGameStats } from '../statsBuilder/request'
@@ -95,18 +96,20 @@ export async function convertImportedGames(
   }
   for (const gameId of ids) {
     const convert = async (trx: Kysely<Database>): Promise<void> => {
-      const game = await trx
-        .selectFrom('games')
-        .select([
-          'id',
-          'home_team_id',
-          'away_team_id',
-          'status',
-          'scoringOwner'
-        ])
-        .where('id', '=', gameId)
-        .forUpdate()
-        .executeTakeFirstOrThrow()
+      const game = requireNamedSides(
+        await trx
+          .selectFrom('games')
+          .select([
+            'id',
+            'home_team_id',
+            'away_team_id',
+            'status',
+            'scoringOwner'
+          ])
+          .where('id', '=', gameId)
+          .forUpdate()
+          .executeTakeFirstOrThrow()
+      )
       const written = await writeImportedRecords(trx, game, { rebuild: true })
       // The repair is the moment to build its statistics again, and to tell
       // what reads the game's plays that they changed: the board's timeline

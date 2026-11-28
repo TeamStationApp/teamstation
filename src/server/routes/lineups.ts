@@ -100,6 +100,7 @@ import {
   type GuestRenamed,
   renameGuestPlayer
 } from '../games/guestPlayers'
+import { requireNamedSides } from '../games/namedSides'
 import {
   type GameAvailability,
   gameAvailability
@@ -481,7 +482,7 @@ export function lineupRoutes(
         .where('id', '=', gameId)
         .executeTakeFirst()
       if (teams == null) throw notFound()
-      await mayPost(db, teams)
+      await mayPost(db, requireNamedSides(teams))
       // A team's default lineup is only for somebody who may see the team.
       const scopes = await visibleScopes(db, actor.userId, actor.isAdmin)
       const sees = (teamId: string): boolean => canSeeTeam(scopes, teamId)
@@ -696,7 +697,7 @@ async function saveSide(
     .transaction()
     .setIsolationLevel('repeatable read')
     .execute(async trx => {
-      const game = await trx
+      const found = await trx
         .selectFrom('games')
         .select([
           'home_team_id',
@@ -711,7 +712,8 @@ async function saveSide(
         ])
         .where('id', '=', gameId)
         .executeTakeFirst()
-      if (game == null) throw notFound()
+      if (found == null) throw notFound()
+      const game = requireNamedSides(found)
       const rows = await readPlays(trx, gameId)
       const stored: StoredGame = await resolveScoringGame(
         trx,

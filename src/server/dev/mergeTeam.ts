@@ -70,6 +70,8 @@ async function findCandidates(db: Kysely<Database>): Promise<Candidate[]> {
   }
   const byMinute = new Map<string, Side[]>()
   for (const game of games) {
+    // The inner joins leave out a game with an open side; this says so to tsc.
+    if (game.homeId == null || game.awayId == null) continue
     const minute = new Date(game.startAt).toISOString()
     const list = byMinute.get(minute) ?? []
     list.push({

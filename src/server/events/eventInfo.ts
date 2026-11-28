@@ -20,6 +20,11 @@ import {
 import { asGameTimezone } from '../../common/gameApprovals'
 import { isRecord } from '../../common/groupCreation'
 import { makeId } from '../../common/ids'
+import {
+  namedTeamIds,
+  OPEN_SIDE_NAME,
+  wireSideId
+} from '../../common/openSides'
 import { type Role, ROLES } from '../../common/roles'
 import { asFieldSize } from '../../common/venues'
 import {
@@ -119,11 +124,16 @@ export async function resolveEvent(
     seasonId: game.season_id
   })
   const rights = await scheduleRights(db, fresh.userId, fresh.isAdmin)
-  const team = await db
-    .selectFrom('teams')
-    .select('name')
-    .where('id', '=', game.home_team_id)
-    .executeTakeFirstOrThrow()
+  // A side whose team is not known yet is TBD, and names no team.
+  const sideTeams = namedTeamIds(game.home_team_id, game.away_team_id)
+  const team =
+    game.home_team_id == null
+      ? { name: OPEN_SIDE_NAME }
+      : await db
+          .selectFrom('teams')
+          .select('name')
+          .where('id', '=', game.home_team_id)
+          .executeTakeFirstOrThrow()
   const field =
     options.withField === true
       ? await gameField(db, game.field_id, game.field_size)
@@ -135,8 +145,8 @@ export async function resolveEvent(
     notes: game.notes,
     arrivalTimeDelta: game.arrival_time_delta,
     title: null,
-    teamId: game.home_team_id,
-    teamIds: [game.home_team_id, game.away_team_id],
+    teamId: wireSideId(game.home_team_id),
+    teamIds: sideTeams,
     seasonId: game.season_id,
     teamName: team.name,
     startAt: game.start_at.toISOString(),
@@ -149,18 +159,25 @@ export async function resolveEvent(
     status: game.status,
     canViewAttendance,
     canManage:
+      // An open side is the season's to schedule, as a named one is.
       mayScheduleIn(rights, game.home_team_id, game.season_id) ||
       mayScheduleIn(rights, game.away_team_id, game.season_id) ||
-      (await canScheduleFor(db, fresh, {
-        kind: 'team',
-        id: game.home_team_id
-      })) ||
-      (await canScheduleFor(db, fresh, {
-        kind: 'team',
-        id: game.away_team_id
-      })),
+      (await anyAsync(
+        sideTeams,
+        async teamId =>
+          await canScheduleFor(db, fresh, { kind: 'team', id: teamId })
+      )),
     ...(field == null ? {} : { field })
   }
+}
+
+/** Whether any of `items` passes `test`, asked one at a time in order. */
+async function anyAsync<T>(
+  items: T[],
+  test: (item: T) => Promise<boolean>
+): Promise<boolean> {
+  for (const item of items) if (await test(item)) return true
+  return false
 }
 
 /**
@@ -481,17 +498,21 @@ export async function readEventInfo(
   const event = await resolveEvent(db, actor, id, { withField: true })
   const fresh = await currentActor(db, actor)
   const scopes = await visibleScopes(db, fresh.userId, fresh.isAdmin)
-  const teams = await db
-    .selectFrom('teams')
-    .select(['id', 'name'])
-    .where('id', 'in', event.teamIds)
-    .execute()
+  const teams =
+    event.teamIds.length === 0
+      ? []
+      : await db
+          .selectFrom('teams')
+          .select(['id', 'name'])
+          .where('id', 'in', event.teamIds)
+          .execute()
   const choices = teams.filter(team => canSeeTeam(scopes, team.id))
   const requested = teamId == null ? undefined : await survivingTeam(db, teamId)
   if (requested != null && !choices.some(team => team.id === requested))
     throw notFound()
   const { teamIds, seasonId, ...info } = event
-  if (!event.canViewAttendance)
+  // A game with both sides open has no team, and so nobody to attend it yet.
+  if (!event.canViewAttendance || event.teamIds.length === 0)
     return { ...info, replyUserIds: [], attendees: [], attendanceTeams: [] }
   let selected =
     requested ??

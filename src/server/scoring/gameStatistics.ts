@@ -14,6 +14,7 @@ import { readSnapshot } from '../db/readSnapshot'
 import { atBatOf } from '../events/atBatInProgress'
 import { pregameFold } from '../events/currentPlay'
 import { playForWire } from '../events/wireRecords'
+import { hasNamedSides } from '../games/namedSides'
 import {
   boardTimeline,
   computeBoardTimeline
@@ -55,7 +56,8 @@ export async function gameStatistics(
       ])
       .where('games.id', '=', gameId)
       .executeTakeFirst()
-    if (game === undefined) throw notFound()
+    // The inner joins find no game with an open side: it has no statistics.
+    if (game === undefined || !hasNamedSides(game)) throw notFound()
     const rows = await trx
       .selectFrom('events')
       .select(['gumbo'])

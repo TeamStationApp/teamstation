@@ -2,6 +2,7 @@ import { type Kysely, sql } from 'kysely'
 
 import { badRequest, HttpError, notFound } from '../../common/errors'
 import { DEFAULT_EVENT_DURATION_MS } from '../../common/eventTime'
+import { OPEN_SIDE_NAME } from '../../common/openSides'
 import { asUmpireAvailability } from '../../common/umpireCleaners'
 import type { UmpireAvailability } from '../../common/umpires'
 import {
@@ -424,8 +425,8 @@ export async function umpireCommitments(
   const games = await db
     .selectFrom('games')
     .innerJoin('seasons', 'seasons.id', 'games.season_id')
-    .innerJoin('teams as home', 'home.id', 'games.home_team_id')
-    .innerJoin('teams as away', 'away.id', 'games.away_team_id')
+    .leftJoin('teams as home', 'home.id', 'games.home_team_id')
+    .leftJoin('teams as away', 'away.id', 'games.away_team_id')
     .select([
       'games.id',
       'games.start_at',
@@ -435,8 +436,8 @@ export async function umpireCommitments(
       'games.guests',
       'games.unrostered',
       'seasons.league_id as leagueId',
-      'home.name as home',
-      'away.name as away'
+      sql<string>`coalesce(home.name, ${OPEN_SIDE_NAME})`.as('home'),
+      sql<string>`coalesce(away.name, ${OPEN_SIDE_NAME})`.as('away')
     ])
     .where('games.start_at', '<=', to)
     .where(

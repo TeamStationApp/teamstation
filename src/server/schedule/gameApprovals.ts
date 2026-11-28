@@ -29,6 +29,7 @@ import {
 } from '../../common/gameApprovals'
 import type { GroupRef } from '../../common/groupCreation'
 import { makeId } from '../../common/ids'
+import { namedTeamIds, wireSideId } from '../../common/openSides'
 import {
   type PlaysLost,
   playsLost,
@@ -120,9 +121,11 @@ export async function requireImmediateGameConsent(
         `A hosting season administrator of ${season?.name ?? 'its season'} must authorize season placement`
       )
     }
+    // An open side (`materialGame` gives it the id `''`) has no team to ask.
     if (!(await seasonGameConsent(db, fresh, game)))
       for (const id of [game.homeTeamId, game.awayTeamId])
-        sides.set(`team:${id}`, { kind: 'team', id })
+        if (id !== wireSideId(null))
+          sides.set(`team:${id}`, { kind: 'team', id })
   }
   for (const side of sides.values()) {
     if (!(await canAdminister(db, fresh, side)))
@@ -132,8 +135,9 @@ export async function requireImmediateGameConsent(
 export function materialGame(game: GameRow): GameIntent {
   return {
     ...storedEventFields(game),
-    homeTeamId: game.home_team_id,
-    awayTeamId: game.away_team_id,
+    // An open side reads as no team until a proposal may leave one open.
+    homeTeamId: wireSideId(game.home_team_id),
+    awayTeamId: wireSideId(game.away_team_id),
     seasonId: game.season_id,
     startAt: game.start_at.toISOString(),
     venue: game.venue,
@@ -231,8 +235,8 @@ async function onlySidesSwapped(
   if (!swapsSides(old, game)) return false
   const kept: GameIntent = {
     ...materialGame(old),
-    homeTeamId: old.away_team_id,
-    awayTeamId: old.home_team_id
+    homeTeamId: wireSideId(old.away_team_id),
+    awayTeamId: wireSideId(old.home_team_id)
   }
   const canonical = async (intent: GameIntent): Promise<GameIntent> => ({
     ...(await normalizedIntent(db, intent, old.timezone)),
@@ -282,14 +286,14 @@ async function scorerSwap(
   const roles = await roleScopes(trx, fresh.userId, fresh.isAdmin)
   // Sent for the team the scorekeeper keeps the score of, whatever the body
   // names: nobody else speaks for it here.
-  const scoredTeam = [old.home_team_id, old.away_team_id].find(teamId =>
-    canScore(roles, teamId)
+  const scoredTeam = namedTeamIds(old.home_team_id, old.away_team_id).find(
+    teamId => canScore(roles, teamId)
   )
   if (scoredTeam == null) return undefined
   if (!(await matchesVersion(trx, old, body.expected)))
     throw conflict('Review the current game before changing its schedule')
   if (!(await maySwapSides(trx, old))) throw conflict(SCORER_SWAP_BEGUN)
-  const teamIds = [old.home_team_id, old.away_team_id]
+  const teamIds = namedTeamIds(old.home_team_id, old.away_team_id)
   const terms: GameRequestTerms = {
     kind: 'game',
     game,
@@ -832,7 +836,10 @@ export async function finishGameRequest(
       )
     if (!(await matchesVersion(trx, current, terms.expected)))
       throw conflict('This game changed. Propose a fresh revision.')
-    const removed = [current.home_team_id, current.away_team_id].filter(
+    const removed = namedTeamIds(
+      current.home_team_id,
+      current.away_team_id
+    ).filter(
       teamId => ![terms.game.homeTeamId, terms.game.awayTeamId].includes(teamId)
     )
     if (removed.length > 0) {
@@ -1752,8 +1759,9 @@ export async function withdrawFromGame(
     await requireScheduler(trx, fresh, { kind: 'team', id: teamId })
     if (systemCancelled(game.cancellation_reason)) return game
     const refs: GroupRef[] = [
-      { kind: 'team', id: game.home_team_id },
-      { kind: 'team', id: game.away_team_id },
+      ...namedTeamIds(game.home_team_id, game.away_team_id).map(
+        id => ({ kind: 'team', id }) as const
+      ),
       ...(game.season_id == null
         ? []
         : [{ kind: 'season' as const, id: game.season_id }])
@@ -2182,13 +2190,13 @@ export async function schedulingGame(
     })
   if (row == null) throw notFound()
   const teamIds = []
-  for (const teamId of [row.home_team_id, row.away_team_id])
+  const sideTeams = namedTeamIds(row.home_team_id, row.away_team_id)
+  for (const teamId of sideTeams)
     if (await canScheduleFor(db, fresh, { kind: 'team', id: teamId }))
       teamIds.push(teamId)
   // A scorekeeper of either team may swap home and away, and nothing else.
   const roles = await roleScopes(db, fresh.userId, fresh.isAdmin)
-  const scorer =
-    canScore(roles, row.home_team_id) || canScore(roles, row.away_team_id)
+  const scorer = sideTeams.some(teamId => canScore(roles, teamId))
   if (teamIds.length === 0 && !scorer) throw forbidden()
   const withdrawn = systemCancelled(row.cancellation_reason)
   const current = atBatOf(row, stored.length > 0)

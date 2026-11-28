@@ -2,6 +2,7 @@ import { type Kysely, sql } from 'kysely'
 
 import { notFound } from '../../common/errors'
 import { calendarDateText } from '../../common/groupCreation'
+import { namedTeamIds } from '../../common/openSides'
 import type { PublicGroup, SearchRow } from '../../common/publicGroups'
 import { publicStaffName } from '../../common/publicStaffName'
 import { givenRolesOnTeams } from '../access'
@@ -212,8 +213,12 @@ export async function relatedTeams(
       .execute()
     add(
       await live(
-        games.map(game =>
-          game.home_team_id === team.id ? game.away_team_id : game.home_team_id
+        namedTeamIds(
+          ...games.map(game =>
+            game.home_team_id === team.id
+              ? game.away_team_id
+              : game.home_team_id
+          )
         )
       )
     )

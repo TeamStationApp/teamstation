@@ -8,6 +8,7 @@ import {
   UMPIRE_SIGN_UP,
   UMPIRE_WITHDRAW
 } from '../../common/notifications'
+import { OPEN_SIDE_NAME } from '../../common/openSides'
 import {
   DEFAULT_UMPIRE_NOTIFICATIONS,
   UMPIRE_NOTICE_DAYS,
@@ -440,16 +441,16 @@ export async function digestGames(
     .selectFrom('games')
     .innerJoin('seasons', 'seasons.id', 'games.season_id')
     .innerJoin('season_umpire_requirements as r', 'r.season_id', 'seasons.id')
-    .innerJoin('teams as home', 'home.id', 'games.home_team_id')
-    .innerJoin('teams as away', 'away.id', 'games.away_team_id')
+    .leftJoin('teams as home', 'home.id', 'games.home_team_id')
+    .leftJoin('teams as away', 'away.id', 'games.away_team_id')
     .leftJoin('venue_fields as f', 'f.id', 'games.field_id')
     .select([
       'games.id as id',
       'games.start_at as startAt',
       'games.venue as venue',
       'f.name as field',
-      'home.name as home',
-      'away.name as away',
+      sql<string>`coalesce(home.name, ${OPEN_SIDE_NAME})`.as('home'),
+      sql<string>`coalesce(away.name, ${OPEN_SIDE_NAME})`.as('away'),
       'seasons.id as seasonId',
       'seasons.name as seasonName',
       'games.timezone as zone'
@@ -588,12 +589,12 @@ async function recordSlotNotice(
   if (recipients.length === 0) return []
   const game = await db
     .selectFrom('games')
-    .innerJoin('teams as home', 'home.id', 'games.home_team_id')
-    .innerJoin('teams as away', 'away.id', 'games.away_team_id')
+    .leftJoin('teams as home', 'home.id', 'games.home_team_id')
+    .leftJoin('teams as away', 'away.id', 'games.away_team_id')
     .select([
       'games.start_at as startAt',
-      'home.name as home',
-      'away.name as away',
+      sql<string>`coalesce(home.name, ${OPEN_SIDE_NAME})`.as('home'),
+      sql<string>`coalesce(away.name, ${OPEN_SIDE_NAME})`.as('away'),
       'games.timezone as zone',
       'games.season_id as seasonId'
     ])

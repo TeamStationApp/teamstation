@@ -177,7 +177,7 @@ describe("a phone's saves when another device's swap is accepted first (#260)", 
         .select(['home_team_id', 'away_team_id'])
         .where('id', '=', gameId)
         .executeTakeFirstOrThrow()
-      return [row.home_team_id, row.away_team_id]
+      return [row.home_team_id!, row.away_team_id!]
     }
     const first = await swap('swap-once-1', {
       homeTeamId: home,
@@ -278,6 +278,7 @@ describe("a phone's saves when another device's swap is accepted first (#260)", 
         await f.h.db
           .selectFrom('games')
           .select(['currentPlay', 'lineups_digest', 'home_team_id'])
+          .$narrowType<{ home_team_id: string }>()
           .where('id', '=', gameId)
           .executeTakeFirstOrThrow()
       const unswapped = await stored()

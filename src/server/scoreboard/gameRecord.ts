@@ -47,6 +47,12 @@ export async function gameRecord(
     ])
     .where('games.id', '=', gameId)
     .executeTakeFirst()
-  if (row == null) return undefined
-  return { ...row, startAt: new Date(row.startAt).getTime() }
+  // The inner joins find no game with an open side: it has no record yet.
+  if (row?.homeTeamId == null || row.awayTeamId == null) return undefined
+  return {
+    ...row,
+    homeTeamId: row.homeTeamId,
+    awayTeamId: row.awayTeamId,
+    startAt: new Date(row.startAt).getTime()
+  }
 }

@@ -1586,7 +1586,7 @@ async function e9(run: Run): Promise<void> {
   )
   for (const game of moved)
     expect(
-      listedTeams.has(game.home_team_id) && listedTeams.has(game.away_team_id)
+      listedTeams.has(game.home_team_id!) && listedTeams.has(game.away_team_id!)
     ).equals(true)
   // The added game is on the schedule at the rejected game's time.
   expect(

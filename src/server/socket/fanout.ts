@@ -3,6 +3,7 @@ import type { Kysely, Selectable } from 'kysely'
 import { systemCancelled } from '../../common/gameApprovals'
 import type { GameChange, PlayEditsData } from '../../common/gameSocket'
 import type { CurrentPlay, GumboPlay } from '../../common/gumboPlay'
+import { wireSideId } from '../../common/openSides'
 import { teamsOfRow } from '../../common/teamLists'
 import type { WalkUpSong } from '../../common/walkUpSong'
 import type { GameScope } from '../access'
@@ -381,8 +382,9 @@ export class GameFanout {
                 status: game.status,
                 awayScore: game.away_score,
                 homeScore: game.home_score,
-                homeTeamId: game.home_team_id,
-                awayTeamId: game.away_team_id,
+                // An open side is `''`, as every answer names it.
+                homeTeamId: wireSideId(game.home_team_id),
+                awayTeamId: wireSideId(game.away_team_id),
                 generation: game.play_generation,
                 withdrawn: systemCancelled(game.cancellation_reason)
               }

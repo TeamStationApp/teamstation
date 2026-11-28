@@ -2,6 +2,7 @@ import { type Kysely, sql } from 'kysely'
 
 import { DEFAULT_EVENT_DURATION_MS } from '../../common/eventTime'
 import type { GameRequestTerms } from '../../common/gameApprovals'
+import { wireSideId } from '../../common/openSides'
 import type { Database } from '../db/database'
 import type { Clock } from '../groups/requests'
 
@@ -106,8 +107,9 @@ export async function occupancy(
       pending: false,
       fieldId: row.field_id,
       size: row.field_size,
-      homeTeamId: row.home_team_id,
-      awayTeamId: row.away_team_id,
+      // An open side is `''`: no team, so it holds no team's time.
+      homeTeamId: wireSideId(row.home_team_id),
+      awayTeamId: wireSideId(row.away_team_id),
       seasonId: row.season_id,
       start: row.start_at.getTime(),
       end

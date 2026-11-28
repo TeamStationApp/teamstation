@@ -328,6 +328,7 @@ describe('who may see what, batched and one at a time', function () {
           .selectFrom('games')
           .select(['home_team_id', 'away_team_id'])
           .where('id', '=', game.id)
+          .$narrowType<{ home_team_id: string; away_team_id: string }>()
           .executeTakeFirstOrThrow()
         const otherGame = tokens.games[tokens.games.length - 1]
         const rows = everybody.flatMap(userId =>

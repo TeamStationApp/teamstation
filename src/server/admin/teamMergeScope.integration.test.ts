@@ -193,6 +193,7 @@ describe('a team merge locks only its two teams', function () {
       .selectFrom('games')
       .select(['home_team_id', 'away_team_id'])
       .where('id', '=', gameId)
+      .$narrowType<{ home_team_id: string; away_team_id: string }>()
       .executeTakeFirstOrThrow()
   const playsOf = async (gameId: string): Promise<number> =>
     (
