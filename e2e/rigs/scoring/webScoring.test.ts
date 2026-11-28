@@ -1,5 +1,8 @@
 import { expect } from 'chai'
+import { mkdtempSync, rmSync } from 'fs'
 import { afterEach, describe, it } from 'mocha'
+import { tmpdir } from 'os'
+import { join } from 'path'
 
 import { BlockedError } from '../../core/result'
 import type { HarnessContext } from '../../core/spec'
@@ -182,6 +185,9 @@ interface Fixture {
   m: any
 }
 
+/** Each fixture's run directory, made in the system's temp directory and removed after its test. */
+const runDirs: string[] = []
+
 function fixture(
   options: {
     answers?: Record<string, unknown>
@@ -196,8 +202,10 @@ function fixture(
   const degraded: string[] = []
   const page = fakePage(calls, options.answers)
   const m = fakeDevice(calls, options.value)
+  const runDir = mkdtempSync(join(tmpdir(), 'webScoring-'))
+  runDirs.push(runDir)
   const ctx = {
-    runDir: '/private/tmp/agent-scratch-501/e2eInfraSplit/m6/B/run',
+    runDir,
     stack: {
       origin: 'https://stack.example.test',
       ...(options.fault === false
@@ -257,6 +265,9 @@ async function within(f: Fixture, body: () => Promise<void>): Promise<void> {
 describe('webScoring', function () {
   afterEach(function () {
     globalThis.fetch = realFetch
+    for (const dir of runDirs.splice(0)) {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it('names scenarios from titles, once each', async function () {
