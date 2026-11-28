@@ -30,11 +30,6 @@ export function appLink(path: string): string {
   return `${PHONE_SCHEME}://${path.replace(/^\/+/, '')}`
 }
 
-/** `text` as a pattern that matches it literally. */
-function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-
 /**
  * iOS may ask once whether to open a link in the app. Taps its Open when it
  * is on screen; a screen without it is the ordinary case.
@@ -63,17 +58,25 @@ export async function openInApp(
   await acceptOpenPrompt(m)
 }
 
+/** How long the app is given to keep a server link before it is stopped, as the runner gives it. */
+export const SERVER_LINK_SETTLE_MS = 3000
+
 /**
  * Points the app at `origin` and launches it fresh, so the launch a test
- * exercises is the ordinary one, talking to that stack.
+ * exercises is the ordinary one, talking to that stack. The app says
+ * "Restart TeamStation" once it has kept the server, but on a phone that
+ * notice is gone within seconds, often before a wait for it starts, so
+ * nothing here waits for it: the app is given the runner's three seconds to
+ * keep the link, then stopped and launched. What the scenario does next on
+ * the stack (its sign-in) is what shows the launch reached it.
  */
 export async function pointAtStack(
   m: StackDevice,
   origin: string,
-  appId: string
+  appId: string,
+  settleMs = SERVER_LINK_SETTLE_MS
 ): Promise<void> {
   await openInApp(m, appId, serverLink(origin))
-  const host = escapeRegExp(new URL(origin).host)
-  await m.assertVisible({ text: `.*${host}.*Restart TeamStation.*` })
+  await new Promise(resolve => setTimeout(resolve, settleMs))
   await m.launchApp({ appId, stopApp: true })
 }

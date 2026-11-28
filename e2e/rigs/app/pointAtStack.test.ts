@@ -5,6 +5,7 @@ import {
   appLink,
   openInApp,
   pointAtStack,
+  SERVER_LINK_SETTLE_MS,
   serverLink,
   type StackDevice
 } from './pointAtStack'
@@ -36,9 +37,16 @@ describe('pointAtStack', function () {
     )
   })
 
-  it('points a stopped app at the stack, waits for its word and launches it fresh', async function () {
+  it('points a stopped app at the stack and launches it fresh, waiting on no notice', async function () {
     const { m, steps } = device(false)
-    await pointAtStack(m, 'https://e2e-03.example.test', 'app.example.develop')
+    const started = Date.now()
+    await pointAtStack(
+      m,
+      'https://e2e-03.example.test',
+      'app.example.develop',
+      20
+    )
+    expect(Date.now() - started).at.least(15)
     expect(steps).deep.equals([
       ['stopApp', { appId: 'app.example.develop' }],
       [
@@ -48,12 +56,11 @@ describe('pointAtStack', function () {
         }
       ],
       ['assertVisible', { text: '^Open$', timeout: 2500 }],
-      [
-        'assertVisible',
-        { text: '.*e2e-03\\.example\\.test.*Restart TeamStation.*' }
-      ],
       ['launchApp', { appId: 'app.example.develop', stopApp: true }]
     ])
+    // The "Restart TeamStation" notice is never looked for: it may be gone.
+    expect(JSON.stringify(steps)).does.not.contain('Restart TeamStation')
+    expect(SERVER_LINK_SETTLE_MS).equals(3000)
   })
 
   it('taps iOS’s Open when it asks before the app takes the link', async function () {
