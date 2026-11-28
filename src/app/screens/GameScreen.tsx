@@ -69,6 +69,7 @@ import {
   PinnedContent,
   PinnedSpacer
 } from '../components/PinnedBands'
+import type { PinnedHead } from '../components/pinnedHead'
 import { useSceneReveals, useSceneShown } from '../components/sceneShown'
 import { useScreenBottom } from '../components/Screen'
 import { TabPages } from '../components/TabPages'
@@ -123,8 +124,10 @@ import {
   MAPPING_WAIT_MS,
   type WallMapping
 } from '../player/wallMapping'
+import { LatestPlaysButton } from '../plays/LatestPlaysButton'
 import { PlaysTab } from '../plays/PlaysTab'
 import { HeldGameNotice } from '../scoring/HeldGameNotice'
+import { usePageTailFollow } from '../scoring/tailFollow'
 import type { GameRecording } from '../stream/gameRecording'
 import { playById } from '../stream/playById'
 import { StreamFooter } from '../stream/StreamFooter'
@@ -913,16 +916,54 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   const shortWindow = useRef(false)
   const progress = handoff.progress
   const pinnedHandoff = watchHandoff(handoff, shortWindow)
+  // Plays asked for where there is no Plays pill — an address's `?tab=plays`
+  // on a game nobody has pitched in, or the pill gone after an undo took the
+  // game's last pitch away — is the game's default section instead, and the
+  // address says so (`below` shows nothing for it meanwhile).
+  const playsMissing = game != null && tab === 'plays' && !hasPlaysPill(game)
+  // A game being scored, on its Plays, follows its newest play down the
+  // page, for a viewer who may read the plays.
+  const followPlays =
+    game != null &&
+    tab === 'plays' &&
+    !playsMissing &&
+    game.status === 'inProgress' &&
+    props.signedIn === true &&
+    !game.nonMemberView
+  // The head is made from what the tail hands it, so the tail reads it here.
+  const pinnedRef = useRef<PinnedHead | null>(null)
+  const playsTail = usePageTailFollow({
+    pinned: pinnedRef,
+    enabled: followPlays
+  })
   const { pinned, selectTab } = usePinnedTabs({
     head: { headerHeight, handoff: pinnedHandoff },
     ready: game != null,
     tab,
-    anchorOnRow: false
+    anchorOnRow: false,
+    onPosition: playsTail.onPosition,
+    followEnd: playsTail.followEnd
   })
-  // Plays asked for where there is no Plays pill — an address's `?tab=plays`
-  // on a game nobody has pitched in — is the game's default section instead,
-  // and the address says so (`below` shows nothing for it meanwhile).
-  const playsMissing = game != null && tab === 'plays' && !hasPlaysPill(game)
+  pinnedRef.current = pinned
+  // Opening Plays on a live game starts at its end, following, once its
+  // stream has first laid out; each layout after that is growth to follow.
+  const playsOpened = useRef(false)
+  useEffect(() => {
+    if (!followPlays) playsOpened.current = false
+  }, [followPlays, gameId])
+  const {
+    resume: resumePlays,
+    onGrow: growPlays,
+    pause: handlePlaysDrag
+  } = playsTail
+  const onPlaysLayout = useCallback((): void => {
+    if (!followPlays) return
+    if (playsOpened.current) growPlays()
+    else {
+      playsOpened.current = true
+      resumePlays()
+    }
+  }, [followPlays, growPlays, resumePlays])
   useEffect(() => {
     if (game == null || !playsMissing) return
     explicitSelection.current = false
@@ -2842,6 +2883,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
             game={game}
             signedIn={props.signedIn}
             onSignIn={() => props.onSignIn?.()}
+            socket={props.socket}
+            onLayout={onPlaysLayout}
           />
         )
       ) : (
@@ -2931,7 +2974,13 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
                   ]}
                 />
               ) : (
-                <Screen key="sections" {...pinned.screen} wide>
+                <Screen
+                  key="sections"
+                  {...pinned.screen}
+                  // A finger on the page stops it following the newest play.
+                  onScrollBeginDrag={handlePlaysDrag}
+                  wide
+                >
                   <CardBand part={pinned.cardBand}>{scoreboard}</CardBand>
                   <PillBand part={pinned.pillBand}>{tabs}</PillBand>
                   <TabPages page={tab} index={tabIndex}>
@@ -2947,6 +2996,14 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
                 </Screen>
               )}
             </TabPages>
+            {tab !== 'watch' && (
+              <LatestPlaysButton
+                shown={followPlays && !playsTail.following}
+                bottom={screenBottom + theme.rem(1)}
+                right={theme.rem(1)}
+                onPress={resumePlays}
+              />
+            )}
           </View>
         </View>
       </LivePillHeld>
