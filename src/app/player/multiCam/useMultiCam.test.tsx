@@ -23,7 +23,14 @@ import {
   MAPPING_WAIT_MS,
   type WallMapping
 } from '../wallMapping'
-import { JOIN_LEAD_SEC, LIVE_OPEN_WAIT_MS, WATCHDOG_MS } from './align'
+import {
+  JOIN_LEAD_SEC,
+  LANDING_MS,
+  LIVE_OPEN_WAIT_MS,
+  nudgeRate,
+  SEEKABLE_SLACK_SEC,
+  WATCHDOG_MS
+} from './align'
 import { tileRects } from './layout'
 import {
   acrossHole,
@@ -179,7 +186,9 @@ async function grid(
   patch: Partial<MultiCamProps> = {},
   options: Partial<MultiCamOptions> = {},
   /** Done to the tiles before they are handed over. */
-  before: (tiles: Record<string, FakeTile>) => void = () => undefined
+  before: (tiles: Record<string, FakeTile>) => void = () => undefined,
+  /** The tiles handed over, by angle. */
+  ids: string[] = ['A', 'B']
 ): Promise<{
   mc: () => MultiCam
   tiles: Record<string, FakeTile>
@@ -232,7 +241,9 @@ async function grid(
     if (latest == null) throw new Error('not mounted')
     return latest
   }
-  const tiles = { A: new FakeTile(), B: new FakeTile() }
+  const tiles: Record<string, FakeTile> = Object.fromEntries(
+    ids.map(id => [id, new FakeTile()])
+  )
   before(tiles)
   await act(async () => {
     for (const [id, tile] of Object.entries(tiles)) {
@@ -3528,6 +3539,526 @@ describe("useMultiCam stopping at a highlight's end (U10)", function () {
     for (let round = 0; round < 25 && !mc().ended; round++) await look(200)
     await look()
     expect(ends).equals(1)
+  })
+})
+
+describe('useMultiCam landing its tiles after a viewer’s seek (U10–U17)', function () {
+  // The default grid: A, heard, two minutes in at 120 s; B, which started a
+  // minute later, at 60 s.
+  let stops: Array<() => void> = []
+  afterEach(function () {
+    for (const stop of stops) stop()
+    stops = []
+  })
+
+  /**
+   * Plays each tile that is playing and has pictures on in real time, at its
+   * rate, as a player does: the game moves, and a join is reached.
+   */
+  let playing = false
+  const playOn = (tiles: Record<string, FakeTile>): void => {
+    let last = Date.now()
+    const timer = setInterval(() => {
+      const now = Date.now()
+      playing = true
+      for (const tile of Object.values(tiles)) {
+        if (!tile.paused && tile.readyState >= 3 && tile.seeking !== true)
+          tile.currentTime += ((now - last) / 1000) * tile.playbackRate
+      }
+      playing = false
+      last = now
+    }, 20)
+    stops.push(() => {
+      clearInterval(timer)
+    })
+  }
+
+  /** Every place the grid or the test sends this tile to from now on. */
+  const seeksOf = (tile: FakeTile): number[] => {
+    const sent: number[] = []
+    let at = tile.currentTime
+    Object.defineProperty(tile, 'currentTime', {
+      configurable: true,
+      get: () => at,
+      set: (to: number) => {
+        at = to
+        // Not the picture moving on as it plays (`playOn`).
+        if (!playing) sent.push(to)
+      }
+    })
+    return sent
+  }
+
+  /** Lets the grid run for this many milliseconds. */
+  const wait = async (ms: number): Promise<void> => {
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, ms))
+    })
+  }
+
+  /** Until the next watchdog look has been and gone. */
+  const nextLook = async (): Promise<void> => {
+    await ticks(1)
+  }
+
+  /** Browser tiles: each holds the whole of its recording. */
+  const full = (tiles: Record<string, FakeTile>): void => {
+    for (const tile of Object.values(tiles)) fill(tile, [0, 600])
+  }
+
+  it('joins a follower 1.4 s out at the open after a step past what the tiles hold, and starts it on the game (U10)', async function () {
+    this.timeout(10_000)
+    const { mc, tiles } = await grid({}, {}, tiles => {
+      fill(tiles.A, [100, 180])
+      fill(tiles.B, [40, 120])
+    })
+    playOn(tiles)
+    await act(async () => {
+      mc().goTo(T0 + 400_000)
+    })
+    expect(tiles.A.paused).equals(true)
+    // B's player lands 1.4 s short of the moment while the grid holds.
+    tiles.B.currentTime = 338.6
+    const sent = seeksOf(tiles.B)
+    fill(tiles.A, [395, 460])
+    fill(tiles.B, [335, 400])
+    await until(() => !tiles.A.paused, 3000)
+    expect(tiles.A.paused).equals(false)
+    expect(tiles.B.paused, 'held at the lead').equals(true)
+    expect(tiles.B.currentTime).equals(340 + JOIN_LEAD_SEC)
+    expect(sent, 'never sought to the moment').not.include(340)
+    // Started once the game reaches its picture.
+    await until(() => !tiles.B.paused, 3000)
+    expect(tiles.B.paused).equals(false)
+    expect(tiles.A.currentTime).greaterThanOrEqual(400 + JOIN_LEAD_SEC - 0.05)
+  })
+
+  it('times the landing from the open after a long hold the seek caused (U10a)', async function () {
+    this.timeout(20_000)
+    const { mc, tiles } = await grid(four, {}, full, ['A', 'B', 'C', 'D'])
+    playOn(tiles)
+    // Nothing there yet, for nine seconds.
+    for (const tile of Object.values(tiles)) fill(tile, [0, 300])
+    await act(async () => {
+      mc().goTo(T0 + 400_000)
+    })
+    expect(tiles.A.paused).equals(true)
+    await ticks(9)
+    expect(tiles.A.paused).equals(true)
+    tiles.B.currentTime = 398.6
+    const sent = seeksOf(tiles.B)
+    full(tiles)
+    await until(() => !tiles.A.paused, 3000)
+    expect(tiles.B.paused).equals(true)
+    expect(tiles.B.currentTime).equals(400 + JOIN_LEAD_SEC)
+    expect(sent).not.include(400)
+
+    // Three looks on, more than ten seconds after the seek but inside the
+    // window from the open: a second follower 0.7 s out is joined, not
+    // nudged.
+    await ticks(3)
+    tiles.C.currentTime = tiles.A.currentTime - 0.7
+    await until(() => tiles.C.paused, 1500)
+    expect(tiles.C.paused, 'joined').equals(true)
+    expect(tiles.C.playbackRate).equals(1)
+    expect(tiles.C.currentTime - tiles.A.currentTime).within(
+      0.3,
+      JOIN_LEAD_SEC + 0.01
+    )
+  })
+
+  it('joins a playing follower 0.7 s out inside the window, rather than nudging it (U11)', async function () {
+    this.timeout(8000)
+    const { mc, tiles } = await grid({}, {}, full)
+    playOn(tiles)
+    await act(async () => {
+      mc().goTo(T0 + 200_000)
+    })
+    expect(tiles.A.paused).equals(false)
+    tiles.B.currentTime = tiles.A.currentTime - 60 - 0.7
+    await until(() => tiles.B.paused, 1500)
+    expect(tiles.B.paused).equals(true)
+    expect(tiles.B.playbackRate).equals(1)
+    expect(tiles.B.currentTime - (tiles.A.currentTime - 60)).within(
+      0.3,
+      JOIN_LEAD_SEC + 0.01
+    )
+  })
+
+  it('nudges a follower its landing join started 0.6 s behind, and does not join it again (U12)', async function () {
+    this.timeout(10_000)
+    const { mc, tiles } = await grid({}, {}, full)
+    playOn(tiles)
+    await act(async () => {
+      mc().goTo(T0 + 200_000)
+    })
+    tiles.B.currentTime = tiles.A.currentTime - 60 - 0.7
+    await until(() => tiles.B.paused, 1500)
+    expect(tiles.B.paused).equals(true)
+    await until(() => !tiles.B.paused, 3000)
+    expect(tiles.B.paused).equals(false)
+    // It started late.
+    tiles.B.currentTime = tiles.A.currentTime - 60 - 0.6
+    await nextLook()
+    expect(tiles.B.paused, 'not joined again').equals(false)
+    expect(tiles.B.playbackRate).greaterThan(1)
+  })
+
+  it('nudges a follower 0.4 s out inside the window (U13)', async function () {
+    this.timeout(8000)
+    const { mc, tiles } = await grid({}, {}, full)
+    playOn(tiles)
+    await act(async () => {
+      mc().goTo(T0 + 200_000)
+    })
+    tiles.B.currentTime = tiles.A.currentTime - 60 - 0.4
+    await nextLook()
+    expect(tiles.B.paused).equals(false)
+    expect(tiles.B.playbackRate).closeTo(nudgeRate(0.4), 1e-9)
+  })
+
+  it('nudges a follower 0.7 s out once the window has passed, and at a cold open (U14)', async function () {
+    this.timeout(20_000)
+    const { mc, tiles } = await grid({}, {}, full)
+    playOn(tiles)
+    // The cold open: no seek yet.
+    await ticks(2)
+    tiles.B.currentTime = tiles.A.currentTime - 60 - 0.7
+    await nextLook()
+    expect(tiles.B.paused, 'cold open').equals(false)
+    expect(tiles.B.playbackRate).closeTo(nudgeRate(0.7), 0.01)
+
+    tiles.B.currentTime = tiles.A.currentTime - 60
+    await act(async () => {
+      mc().goTo(T0 + 200_000)
+    })
+    await ticks(11)
+    tiles.B.currentTime = tiles.A.currentTime - 60 - 0.7
+    await nextLook()
+    expect(tiles.B.paused, `past ${LANDING_MS} ms`).equals(false)
+    expect(tiles.B.playbackRate).closeTo(nudgeRate(0.7), 0.01)
+  })
+
+  it('seeks a follower 1.2 s out exactly at the grid’s cold open, as before (U14a)', async function () {
+    this.timeout(8000)
+    const { tiles } = await grid({}, {}, tiles => {
+      fill(tiles.A, [120, 123])
+      // Nor does its player say it can play there.
+      tiles.A.readyState = 2
+      fill(tiles.B, [50, 70])
+    })
+    await ticks(2)
+    expect(tiles.A.paused).equals(true)
+    tiles.B.currentTime = 58.8
+    fill(tiles.A, [100, 180])
+    tiles.A.readyState = 4
+    await until(() => !tiles.A.paused, 3000)
+    expect(tiles.A.paused).equals(false)
+    expect(tiles.B.currentTime).equals(60)
+    expect(tiles.B.paused).equals(false)
+  })
+
+  it('never joins a starved follower 1.2 s out inside the window (U14b)', async function () {
+    this.timeout(10_000)
+    const { mc, tiles } = await grid({}, {}, full)
+    playOn(tiles)
+    await act(async () => {
+      mc().goTo(T0 + 200_000)
+    })
+    tiles.B.readyState = 1
+    const sent = seeksOf(tiles.B)
+    for (let look = 0; look < 3; look++) {
+      // Starved, it stands still while the game goes on: kept 1.2 s out,
+      // short of REPLACE_SEC, at every look.
+      tiles.B.currentTime = tiles.A.currentTime - 60 - 1.2
+      sent.length = 0
+      await nextLook()
+      expect(tiles.B.paused, `look ${look}`).equals(false)
+      expect(sent, `look ${look}`).deep.equals([])
+    }
+  })
+
+  for (const held of [false, true]) {
+    it(`opens with the steady rule after a hold no seek caused, ${LANDING_MS} ms after a seek that ${held ? 'held' : 'did not hold'} the grid (U14c)`, async function () {
+      this.timeout(30_000)
+      const { mc, tiles } = await grid(four, {}, full, ['A', 'B', 'C', 'D'])
+      playOn(tiles)
+      if (held) for (const tile of Object.values(tiles)) fill(tile, [0, 100])
+      await act(async () => {
+        mc().goTo(T0 + 200_000)
+      })
+      expect(tiles.A.paused).equals(held)
+      if (held) {
+        full(tiles)
+        await until(() => !tiles.A.paused, 3000)
+        expect(tiles.A.paused).equals(false)
+      }
+      await ticks(11)
+      // D runs dry, and the grid holds.
+      const at = tiles.D.currentTime
+      fill(tiles.D, [0, at + 0.3])
+      await until(() => tiles.A.paused, 1500)
+      expect(tiles.A.paused).equals(true)
+      const there = tiles.A.currentTime
+      tiles.B.currentTime = there - 0.7
+      tiles.C.currentTime = there - 1.2
+      full(tiles)
+      await until(() => !tiles.A.paused, 3000)
+      expect(tiles.A.paused).equals(false)
+      expect(tiles.B.paused, 'B not joined').equals(false)
+      expect(tiles.B.playbackRate).closeTo(nudgeRate(0.7), 0.01)
+      expect(tiles.C.paused, 'C not joined').equals(false)
+      expect(tiles.C.currentTime, 'C sought exactly').closeTo(there, 0.1)
+    })
+  }
+
+  it('lets a second seek inside the window join a tile once more (U15)', async function () {
+    this.timeout(12_000)
+    const { mc, tiles } = await grid({}, {}, full)
+    playOn(tiles)
+    await act(async () => {
+      mc().goTo(T0 + 200_000)
+    })
+    tiles.B.currentTime = tiles.A.currentTime - 60 - 0.7
+    await until(() => tiles.B.paused, 1500)
+    expect(tiles.B.paused).equals(true)
+    await until(() => !tiles.B.paused, 3000)
+    expect(tiles.B.paused).equals(false)
+
+    await act(async () => {
+      mc().goTo(T0 + 210_000)
+    })
+    tiles.B.currentTime = tiles.A.currentTime - 60 - 0.7
+    await until(() => tiles.B.paused, 1500)
+    expect(tiles.B.paused, 'joined for the second seek').equals(true)
+    expect(tiles.B.playbackRate).equals(1)
+  })
+
+  /** Two live phone tiles, from the take's start, that say where they end. */
+  const live = async (
+    endOf: Record<string, () => number>,
+    quiet = false
+  ): ReturnType<typeof grid> =>
+    await grid(
+      {
+        videos: [liveVideo('A', 0), liveVideo('B', 0)],
+        order: ['A', 'B'],
+        atMs: T0 + 150_000
+      },
+      {},
+      tiles => {
+        for (const [id, tile] of Object.entries(tiles)) {
+          tile.duration = Number.POSITIVE_INFINITY
+          Object.defineProperty(tile, 'seekableEnd', { get: endOf[id] })
+          if (id === 'B' && quiet) Object.assign(tile, { seekableQuiet: true })
+          tile.currentTime = 150
+        }
+      }
+    )
+
+  it('fits a join’s lead short of the tile’s seekable end, and its retry and its wait (U16)', async function () {
+    this.timeout(12_000)
+    let bEnd = 300
+    const { tiles } = await live({ A: () => 300, B: () => bEnd })
+    await ticks(1)
+    expect(tiles.A.paused).equals(false)
+    // B is far out, and its newest footage half a second past the moment.
+    tiles.A.currentTime = 151
+    tiles.B.currentTime = 148
+    bEnd = 151.5
+    await nextLook()
+    expect(tiles.B.paused).equals(true)
+    expect(tiles.B.currentTime).closeTo(151 + 0.5 - SEEKABLE_SLACK_SEC, 1e-9)
+
+    // The game passes it before it is ready: sent on by the doubled fitted
+    // lead, not JOIN_LEAD_SEC's.
+    tiles.B.readyState = 2
+    bEnd = 153
+    tiles.A.currentTime = 151.75
+    await wait(150)
+    expect(tiles.B.paused).equals(true)
+    expect(tiles.B.currentTime).closeTo(151.75 + 2 * 0.25, 1e-9)
+
+    // Again, with no game to follow: started after the fitted lead.
+    tiles.B.readyState = 4
+    tiles.A.currentTime = 152
+    tiles.B.currentTime = 149
+    bEnd = 152.5
+    await nextLook()
+    expect(tiles.B.paused).equals(true)
+    expect(tiles.B.currentTime).closeTo(152.25, 1e-9)
+    tiles.A.pause()
+    await wait(500)
+    expect(tiles.B.paused, 'started after the fitted lead').equals(false)
+  })
+
+  it('does not send again a joining tile whose footage ends where it waits, and starts it once it is ready (U16b)', async function () {
+    this.timeout(12_000)
+    let bEnd = 300
+    const { tiles } = await live({ A: () => 300, B: () => bEnd })
+    await ticks(1)
+    // B is far out, and its footage ends just past the moment: no lead.
+    tiles.A.currentTime = 151
+    tiles.B.currentTime = 148
+    bEnd = 151 + SEEKABLE_SLACK_SEC
+    // Its seek does not land when the game passes it, nor for a while.
+    tiles.B.seeking = true
+    await nextLook()
+    expect(tiles.B.paused).equals(true)
+    expect(tiles.B.currentTime).closeTo(151, 1e-9)
+
+    const sent = seeksOf(tiles.B)
+    for (const at of [151.5, 152, 152.5]) {
+      tiles.A.currentTime = at
+      bEnd = at + SEEKABLE_SLACK_SEC
+      await wait(150)
+    }
+    expect(sent, 'never sent again').deep.equals([])
+    expect(tiles.B.paused).equals(true)
+
+    // It lands: started from where it stands.
+    tiles.B.seeking = false
+    await wait(150)
+    expect(tiles.B.paused).equals(false)
+    expect(sent).deep.equals([])
+  })
+
+  it('gives a join its whole lead where the tile’s seekable end has gone quiet (U16a)', async function () {
+    this.timeout(8000)
+    let bEnd = 300
+    const { tiles } = await live({ A: () => 300, B: () => bEnd }, true)
+    await ticks(1)
+    tiles.A.currentTime = 151
+    tiles.B.currentTime = 148
+    bEnd = 151.5
+    await nextLook()
+    expect(tiles.B.paused).equals(true)
+    expect(tiles.B.currentTime).closeTo(151 + JOIN_LEAD_SEC, 1e-9)
+  })
+
+  it('never joins the heard tile, and keeps parked tiles parked, inside the window (U17)', async function () {
+    this.timeout(10_000)
+    // B was recording for its first minute only; C not yet.
+    const short = { ...video('B', 0), durationSec: 60 }
+    const { mc, tiles } = await grid(
+      {
+        videos: [video('A', 0), short, video('C', 300)],
+        order: ['A', 'B', 'C']
+      },
+      {},
+      tiles => {
+        full(tiles)
+        tiles.B.duration = 60
+      },
+      ['A', 'B', 'C']
+    )
+    playOn(tiles)
+    await act(async () => {
+      mc().goTo(T0 + 200_000)
+    })
+    const heard = seeksOf(tiles.A)
+    for (let look = 0; look < 3; look++) {
+      await nextLook()
+      expect(tiles.A.paused, `heard, look ${look}`).equals(false)
+      expect(tiles.A.playbackRate).equals(1)
+      expect(heard, 'the heard tile never moved').deep.equals([])
+      expect(mc().tiles.B?.parked).equals('afterEnd')
+      expect(tiles.B.paused).equals(true)
+      expect(tiles.B.currentTime).equals(60)
+      expect(mc().tiles.C?.parked).equals('beforeStart')
+      expect(tiles.C.paused).equals(true)
+      expect(tiles.C.currentTime).equals(0)
+    }
+  })
+
+  it('keeps a live tile whose footage has not reached the moment parked, never sought, inside the window (U17)', async function () {
+    this.timeout(10_000)
+    const dated = (seconds: number): WallMapping =>
+      fromFragments(
+        Array.from({ length: seconds / 4 }, (unused, index) => ({
+          start: index * 4,
+          duration: 4,
+          programDateTime: T0 + index * 4000
+        }))
+      )
+    const held: Record<string, WallMapping> = { A: dated(300), B: dated(100) }
+    const { mc, tiles } = await grid(
+      {
+        videos: [liveVideo('A', 0), liveVideo('B', 0)],
+        order: ['A', 'B'],
+        atMs: T0 + 150_000
+      },
+      { fallbackMapping: id => held[id] ?? null },
+      tiles => {
+        for (const tile of Object.values(tiles))
+          tile.duration = Number.POSITIVE_INFINITY
+        fill(tiles.A, [100, 300])
+        Object.assign(tiles.A, { seekable: { length: 1, end: () => 300 } })
+        fill(tiles.B, [60, 100])
+        Object.assign(tiles.B, { seekable: { length: 1, end: () => 100 } })
+        tiles.B.currentTime = 99
+      }
+    )
+    playOn(tiles)
+    await ticks(1)
+    await act(async () => {
+      mc().goTo(T0 + 160_000)
+    })
+    for (let look = 0; look < 3; look++) {
+      await nextLook()
+      expect(mc().tiles.B?.parked, `look ${look}`).equals('notYet')
+      expect(tiles.B.paused).equals(true)
+      expect(tiles.B.currentTime, 'never sought').equals(99)
+      expect(tiles.A.paused).equals(false)
+    }
+  })
+
+  it('keeps a tile at the far side of a hole waiting there inside the window, and starts it where it stands (U17)', async function () {
+    this.timeout(15_000)
+    // B's camera was away for 8 s after its first 100 s.
+    const fragments = (holeAtSec: number, holeSec: number): WallMapping =>
+      fromFragments(
+        Array.from({ length: 100 }, (unused, index) => ({
+          start: index * 4,
+          duration: 4,
+          programDateTime:
+            T0 + index * 4000 + (index * 4 >= holeAtSec ? holeSec * 1000 : 0)
+        }))
+      )
+    const held: Record<string, WallMapping> = {
+      A: fragments(400, 0),
+      B: fragments(100, 8)
+    }
+    const { mc, tiles } = await grid(
+      {
+        videos: [liveVideo('A', 0), liveVideo('B', 0)],
+        order: ['A', 'B'],
+        atMs: T0 + 90_000
+      },
+      { fallbackMapping: id => held[id] ?? null },
+      tiles => {
+        for (const tile of Object.values(tiles)) {
+          tile.duration = Number.POSITIVE_INFINITY
+          fill(tile, [0, 400])
+          Object.assign(tile, { seekable: { length: 1, end: () => 400 } })
+        }
+      }
+    )
+    playOn(tiles)
+    await ticks(1)
+    await act(async () => {
+      mc().goTo(T0 + 105_000)
+    })
+    // Inside its hole: it waits at its first picture after it.
+    await nextLook()
+    expect(tiles.B.paused).equals(true)
+    expect(tiles.B.currentTime).equals(100)
+    expect(mc().tiles.B?.parked ?? null).equals(null)
+    // And starts from there when the game reaches it, three seconds on.
+    await until(() => !tiles.B.paused, 5000)
+    expect(tiles.B.paused).equals(false)
+    expect(tiles.A.currentTime).greaterThanOrEqual(107)
+    expect(tiles.B.currentTime).closeTo(100, 1)
   })
 })
 
