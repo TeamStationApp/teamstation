@@ -7,6 +7,7 @@ import {
   modelLabel,
   type NamedPerson
 } from '../../common/names'
+import { namedTeamIds } from '../../common/openSides'
 import {
   asStoredPlayerNamePrivacy,
   DEFAULT_PLAYER_NAME_PRIVACY,
@@ -261,7 +262,9 @@ export async function lentPlayers(
   const guested = new Set(
     pool.flatMap(row => {
       const userId = current.get(row.userId) ?? row.userId
-      return [`${row.home} ${userId}`, `${row.away} ${userId}`]
+      return namedTeamIds(row.home, row.away).map(
+        teamId => `${teamId} ${userId}`
+      )
     })
   )
   // Once they play for the team, its format is theirs like anybody's.

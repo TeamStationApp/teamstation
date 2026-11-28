@@ -15,7 +15,9 @@ const { nativeExcludes } = createRequire(import.meta.url)(
 )
 
 // Line coverage of the app files this branch changes. The gate reads
-// `git diff origin/master...HEAD`, so it runs after the milestone is committed.
+// `git diff origin/master...HEAD`, or the diff from `TS_COVERAGE_BASE` when
+// that is set (a branch built on another unmerged one, or on develop), so it
+// runs after the milestone is committed.
 const temp = resolve('coverage/uiFixes/tmp')
 rmSync(resolve('coverage/uiFixes'), { recursive: true, force: true })
 mkdirSync(temp, { recursive: true })
@@ -91,6 +93,9 @@ const check = spawnSync(
   'node',
   [
     'scripts/changed-line-check.cjs',
+    ...(process.env.TS_COVERAGE_BASE
+      ? ['--base', process.env.TS_COVERAGE_BASE]
+      : []),
     '--coverage',
     'coverage/uiFixes/coverage-final.json',
     '--ext',

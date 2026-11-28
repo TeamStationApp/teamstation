@@ -27,8 +27,9 @@ export interface ViewerAssociation {
 /** What the pick reads of a game: its teams', season's and leagues' ids. */
 export interface SponsorGame {
   id: string
-  homeTeamId: string
-  awayTeamId: string
+  /** Null for an open side: no team, so no league sponsors it. */
+  homeTeamId: string | null
+  awayTeamId: string | null
   seasonId: string | null
   /** The league of the game's season, which may be neither team's. */
   seasonLeagueId: string | null
@@ -65,7 +66,7 @@ export function associatedSides(
     ['away', game.awayTeamId, game.awayLeagueId]
   ] as const)
     if (
-      viewer.teamIds.has(teamId) ||
+      (teamId != null && viewer.teamIds.has(teamId)) ||
       inSeason ||
       (inLeague && leagueId === game.seasonLeagueId)
     )

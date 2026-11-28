@@ -7,6 +7,7 @@ import {
   type SqlBool
 } from 'kysely'
 
+import { namedTeamIds } from '../common/openSides'
 import { IMPLIED_ROLES, type Role, ROLES } from '../common/roles'
 import { onePeople, type OnePerson, onePerson } from './admin/people'
 import { anyOf } from './db/anyOf'
@@ -788,9 +789,9 @@ export function canCoach(scopes: RoleScopes, teamId: string): boolean {
  */
 export function lineupTeams(
   scopes: RoleScopes,
-  game: { home_team_id: string; away_team_id: string }
+  game: { home_team_id: string | null; away_team_id: string | null }
 ): string[] {
-  const teams = [game.away_team_id, game.home_team_id]
+  const teams = namedTeamIds(game.away_team_id, game.home_team_id)
   if (teams.some(teamId => canScore(scopes, teamId))) return teams
   return teams.filter(teamId => canCoach(scopes, teamId))
 }
@@ -809,7 +810,7 @@ export function lineupTeams(
 export async function planTeams(
   db: Kysely<Database>,
   userId: string,
-  game: { home_team_id: string; away_team_id: string }
+  game: { home_team_id: string | null; away_team_id: string | null }
 ): Promise<string[]> {
   const open = await db
     .selectFrom('users')
@@ -825,7 +826,7 @@ export async function planTeams(
     userId
   )!
   await inheritSets(db, [coach, assistant])
-  return [game.away_team_id, game.home_team_id].filter(
+  return namedTeamIds(game.away_team_id, game.home_team_id).filter(
     teamId => coach.teamIds.has(teamId) || assistant.teamIds.has(teamId)
   )
 }
@@ -1221,17 +1222,21 @@ export async function givenRoleLevelsAt(
   )
 }
 
+/** A game's sides and season; a null side is open (`common/openSides.ts`). */
 export interface GameScope {
-  homeTeamId: string
-  awayTeamId: string
+  homeTeamId: string | null
+  awayTeamId: string | null
   seasonId: string | null
 }
 
-/** Whether a game, and so its videos, events and stats, may be seen. */
+/**
+ * Whether a game, and so its videos, events and stats, may be seen. An open
+ * side grants nobody: the named team's people and the season's see it.
+ */
 export function canSeeGame(scopes: VisibleScopes, game: GameScope): boolean {
   if (scopes.isAdmin) return true
-  if (scopes.teamIds.has(game.homeTeamId)) return true
-  if (scopes.teamIds.has(game.awayTeamId)) return true
+  for (const teamId of namedTeamIds(game.homeTeamId, game.awayTeamId))
+    if (scopes.teamIds.has(teamId)) return true
   if (game.seasonId != null && scopes.seasonIds.has(game.seasonId)) return true
   return false
 }

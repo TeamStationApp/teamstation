@@ -91,8 +91,8 @@ describe('replay seed', function () {
       status: row.status,
       scoringOwner: row.scoringOwner ?? null,
       seasonId: row.season_id,
-      homeTeamId: row.home_team_id,
-      awayTeamId: row.away_team_id
+      homeTeamId: row.home_team_id!,
+      awayTeamId: row.away_team_id!
     }
   }
 

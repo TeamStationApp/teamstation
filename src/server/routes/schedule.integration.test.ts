@@ -453,6 +453,7 @@ describe('scheduling a team’s games over HTTP', function () {
         .selectFrom('games')
         .select(['away_team_id'])
         .where('id', '=', gameId)
+        .$narrowType<{ away_team_id: string }>()
         .executeTakeFirstOrThrow()
     ).away_team_id
   const holdersOf = async (
@@ -739,6 +740,7 @@ describe('scheduling a team’s games over HTTP', function () {
       .selectFrom('games')
       .select(['home_team_id', 'away_team_id', 'home_score', 'away_score'])
       .where('id', '=', gameId)
+      .$narrowType<{ home_team_id: string; away_team_id: string }>()
       .executeTakeFirstOrThrow()
   /** A Hawks home game against Dunlins, held under `id`. */
   const sidedGame = async (

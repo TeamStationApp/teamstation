@@ -9,6 +9,7 @@ import {
   unauthorized
 } from '../../common/errors'
 import type { PlayerAddTold } from '../../common/notifications'
+import { namedTeamIds } from '../../common/openSides'
 import { outcomeName } from '../../common/outcomes'
 import {
   asPersonSettings,
@@ -454,8 +455,9 @@ export function playerRoutes(
       const sees = (row: PlayRow): boolean =>
         scopes.isAdmin ||
         ownPlays ||
-        scopes.teamIds.has(row.homeTeamId) ||
-        scopes.teamIds.has(row.awayTeamId) ||
+        namedTeamIds(row.homeTeamId, row.awayTeamId).some(teamId =>
+          scopes.teamIds.has(teamId)
+        ) ||
         (row.seasonId != null && scopes.seasonIds.has(row.seasonId))
 
       const settings = await highlightSettings(db)
@@ -533,7 +535,7 @@ export function playerRoutes(
         )
         const names = await teamNames(
           db,
-          usable.flatMap(row => [row.homeTeamId, row.awayTeamId])
+          usable.flatMap(row => namedTeamIds(row.homeTeamId, row.awayTeamId))
         )
 
         for (const row of usable) {

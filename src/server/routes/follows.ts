@@ -3,6 +3,7 @@ import type { Kysely } from 'kysely'
 
 import type { FollowableTeam, ScheduleEntry } from '../../common/api'
 import { badRequest, notFound, unauthorized } from '../../common/errors'
+import { OPEN_SIDE_NAME, wireSideId } from '../../common/openSides'
 import { canReadFollowedTeam, canSeeTeam, visibleScopes } from '../access'
 import { seasonTitle } from '../chat/titles'
 import type { Database } from '../db/database'
@@ -144,10 +145,11 @@ export function followRoutes(
       )
         throw notFound()
 
+      // An open side joins no team: it is TBD (`common/openSides.ts`).
       const games = await db
         .selectFrom('games')
-        .innerJoin('teams as home', 'home.id', 'games.home_team_id')
-        .innerJoin('teams as away', 'away.id', 'games.away_team_id')
+        .leftJoin('teams as home', 'home.id', 'games.home_team_id')
+        .leftJoin('teams as away', 'away.id', 'games.away_team_id')
         .select([
           'games.id as gameId',
           'games.start_at as startAt',
@@ -171,8 +173,14 @@ export function followRoutes(
       const schedule: ScheduleEntry[] = games.map(game => ({
         gameId: game.gameId,
         startsAt: game.startAt.toISOString(),
-        homeTeam: { id: game.homeId, name: game.homeName },
-        awayTeam: { id: game.awayId, name: game.awayName },
+        homeTeam: {
+          id: wireSideId(game.homeId),
+          name: game.homeName ?? OPEN_SIDE_NAME
+        },
+        awayTeam: {
+          id: wireSideId(game.awayId),
+          name: game.awayName ?? OPEN_SIDE_NAME
+        },
         venue: game.venue
       }))
       res.json(schedule)

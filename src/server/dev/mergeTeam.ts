@@ -18,7 +18,7 @@ import { serverConfig } from '../serverConfig'
  * should see is what it is about to do.
  */
 
-interface Candidate {
+export interface Candidate {
   externalId: string
   externalName: string
   fullId: string
@@ -42,7 +42,9 @@ interface Candidate {
  * nothing in their names, and `Bay Stars (Mize)` and `MC1 Lofton` look no less
  * alike than a pair that really is one team.
  */
-async function findCandidates(db: Kysely<Database>): Promise<Candidate[]> {
+export async function findCandidates(
+  db: Kysely<Database>
+): Promise<Candidate[]> {
   const games = await db
     .selectFrom('games')
     .innerJoin('teams as home', 'home.id', 'games.home_team_id')
@@ -50,8 +52,9 @@ async function findCandidates(db: Kysely<Database>): Promise<Candidate[]> {
     .select([
       'games.id as id',
       'games.start_at as startAt',
-      'games.home_team_id as homeId',
-      'games.away_team_id as awayId',
+      // The joined teams' ids: the inner joins leave out an open side.
+      'home.id as homeId',
+      'away.id as awayId',
       'home.name as homeName',
       'home.kind as homeKind',
       'away.name as awayName',

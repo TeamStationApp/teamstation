@@ -22,6 +22,7 @@ import {
   type ValidationRule
 } from 'graphql'
 
+import { wireSideId } from '../../common/openSides'
 import { RestError, type RestReader } from './restReader'
 import { type StatsContext, statsField } from './statsField'
 
@@ -149,20 +150,23 @@ const LISTED_GAME_FIELDS = new Set([
 
 /**
  * One side of a game, named as its schedule row or the game route names it.
- * A logo the row does not carry is left to the team's own route.
+ * A logo the row does not carry is left to the team's own route. Null for an
+ * open side, whose id the routes give as `''`: it has no team yet.
  */
 async function sideOf(
   game: GameSource,
   side: 'home' | 'away',
   context: GraphqlContext
-): Promise<TeamSource> {
+): Promise<TeamSource | null> {
   const row =
     game.listed?.[`${side}TeamId`] != null
       ? game.listed
       : await gameDetail(game, context)
+  const teamId = String(row[`${side}TeamId`])
+  if (teamId === wireSideId(null)) return null
   const logo = row[`${side}LogoUrl`] as string | null | undefined
   return {
-    id: String(row[`${side}TeamId`]),
+    id: teamId,
     listed: {
       name: row[`${side}TeamName`] as string,
       ...(logo === undefined ? {} : { logoUrl: logo })
@@ -509,7 +513,7 @@ const GameType: GraphQLObjectType = new GraphQLObjectType({
         game: GameSource,
         _args: unknown,
         context: GraphqlContext
-      ): Promise<TeamSource> => await sideOf(game, 'home', context)
+      ): Promise<TeamSource | null> => await sideOf(game, 'home', context)
     },
     awayTeam: {
       type: TeamType,
@@ -517,7 +521,7 @@ const GameType: GraphQLObjectType = new GraphQLObjectType({
         game: GameSource,
         _args: unknown,
         context: GraphqlContext
-      ): Promise<TeamSource> => await sideOf(game, 'away', context)
+      ): Promise<TeamSource | null> => await sideOf(game, 'away', context)
     },
     season: {
       type: SeasonType,

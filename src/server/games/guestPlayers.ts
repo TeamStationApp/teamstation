@@ -36,6 +36,7 @@ import {
   guestGameOpen,
   playedForOther
 } from './guestChecks'
+import { type NamedSides, requireNamedSides } from './namedSides'
 
 /**
  * What every guest write checks, with the game row held: the side holds the
@@ -49,14 +50,15 @@ async function guestGate(
   gameId: string,
   side: Side,
   expectedTeamId?: string
-): Promise<{ game: Selectable<GamesTable>; teamId: string }> {
-  const game = await trx
+): Promise<{ game: NamedSides<Selectable<GamesTable>>; teamId: string }> {
+  const found = await trx
     .selectFrom('games')
     .selectAll()
     .where('id', '=', gameId)
     .forUpdate()
     .executeTakeFirst()
-  if (game == null) throw notFound()
+  if (found == null) throw notFound()
+  const game = requireNamedSides(found)
   const roles = await roleScopes(trx, actor.userId, actor.isAdmin)
   const teamId = side === 'home' ? game.home_team_id : game.away_team_id
   if (expectedTeamId != null && expectedTeamId !== teamId)
@@ -188,13 +190,14 @@ export async function renameGuestPlayer(
   const write = async (trx: Transaction<Database>): Promise<GuestRenamed> => {
     await lockPlayerEdits(trx)
     await lockGameTeams(trx, gameId)
-    const game = await trx
+    const found = await trx
       .selectFrom('games')
       .select(['home_team_id', 'away_team_id', 'guests'])
       .where('id', '=', gameId)
       .forUpdate()
       .executeTakeFirst()
-    if (game == null) throw notFound()
+    if (found == null) throw notFound()
+    const game = requireNamedSides(found)
     const guest = await trx
       .selectFrom('users')
       .innerJoin('gumbo_ids', 'gumbo_ids.user_id', 'users.id')

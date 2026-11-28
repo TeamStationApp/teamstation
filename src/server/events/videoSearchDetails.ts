@@ -1,5 +1,6 @@
 import type { Kysely } from 'kysely'
 
+import { namedTeamIds } from '../../common/openSides'
 import { survivorsOf } from '../admin/people'
 import type { Database } from '../db/database'
 import { gameLineups } from './teamLineups'
@@ -35,7 +36,7 @@ export async function videoSearchDetails(
     .orderBy('games.id', 'asc')
     .execute()
   for (const game of games) {
-    for (const id of [game.away_team_id, game.home_team_id]) {
+    for (const id of namedTeamIds(game.away_team_id, game.home_team_id)) {
       if (!teams.has(id) && game.seasonName !== null)
         teams.set(id, { name: game.seasonName, leagueName: game.leagueName })
     }
@@ -59,13 +60,17 @@ export async function videoSearchDetails(
     .select(['game_id', 'gumbo_id', 'team_id'])
     .where('game_id', 'in', gameIds)
     .execute()
-  const identities = await db
-    .selectFrom('teams')
-    .select(['id', 'name'])
-    .where('id', 'in', [
-      ...new Set(games.flatMap(g => [g.home_team_id, g.away_team_id]))
-    ])
-    .execute()
+  const sideTeams = [
+    ...new Set(games.flatMap(g => namedTeamIds(g.home_team_id, g.away_team_id)))
+  ]
+  const identities =
+    sideTeams.length === 0
+      ? []
+      : await db
+          .selectFrom('teams')
+          .select(['id', 'name'])
+          .where('id', 'in', sideTeams)
+          .execute()
   const names = new Map(identities.map(t => [t.id, t.name]))
   const appearances: Array<{ gumboId: number; teamId: string | null }> = []
   for (const game of games) {

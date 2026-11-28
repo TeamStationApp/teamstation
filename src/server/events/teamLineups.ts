@@ -3,6 +3,11 @@ import { createHash } from 'node:crypto'
 import type { Kysely } from 'kysely'
 
 import type { CurrentPlay, GumboPlay } from '../../common/gumboPlay'
+import {
+  namedTeamIds,
+  OPEN_SIDE_NAME,
+  wireSideId
+} from '../../common/openSides'
 import { recordOf } from '../../common/scoring/gumbo'
 import {
   asStoredDefaultLineup,
@@ -28,6 +33,7 @@ import type { SideTeams } from '../../common/scoring/teamRecord'
 import { teamsOfRow } from '../../common/teamLists'
 import type { Database } from '../db/database'
 import { fenceDistanceFor } from '../games/fenceDistance'
+import type { GameSideIds } from '../games/namedSides'
 import { resolveGumboIds } from '../scoring/gumboIds'
 import { namesMergedAccounts, resolveScoringGame } from '../scoring/openRow'
 import { teamNames } from '../users/nameBook'
@@ -37,23 +43,32 @@ import { readPlays } from './postPlays'
 
 type Trx = Kysely<Database>
 
-/** A game's teams, as the replay names them. */
+/**
+ * A game's teams, as the replay names them. An open side is TBD with the id
+ * `''`: it has no roster and no lineup until its team is known.
+ */
 export async function lineupContext(
   db: Trx,
-  game: { id: string; home_team_id: string; away_team_id: string }
+  game: { id: string } & GameSideIds
 ): Promise<LineupContext> {
-  const rows = await db
-    .selectFrom('teams')
-    .select(['id', 'name'])
-    .where('id', 'in', [game.home_team_id, game.away_team_id])
-    .execute()
-  const nameOf = (id: string): string =>
-    rows.find(row => row.id === id)?.name ?? ''
+  const named = namedTeamIds(game.home_team_id, game.away_team_id)
+  const rows =
+    named.length === 0
+      ? []
+      : await db
+          .selectFrom('teams')
+          .select(['id', 'name'])
+          .where('id', 'in', named)
+          .execute()
+  const sideOf = (id: string | null): { id: string; name: string } =>
+    id == null
+      ? { id: wireSideId(id), name: OPEN_SIDE_NAME }
+      : { id, name: rows.find(row => row.id === id)?.name ?? '' }
   return {
     gamePk: game.id,
     teams: {
-      away: { id: game.away_team_id, name: nameOf(game.away_team_id) },
-      home: { id: game.home_team_id, name: nameOf(game.home_team_id) }
+      away: sideOf(game.away_team_id),
+      home: sideOf(game.home_team_id)
     },
     fenceDistanceFt: await fenceDistanceFor(db, game.id)
   }
@@ -71,8 +86,8 @@ export async function gameLineups(
   db: Trx,
   game: {
     id: string
-    home_team_id: string
-    away_team_id: string
+    home_team_id: string | null
+    away_team_id: string | null
     currentPlay: unknown
     pregame?: unknown
   },
@@ -118,8 +133,8 @@ export async function lineupsAnswer(
 /** The game row's fields `lineupsAnswer` reads the lineups from. */
 export interface LineupsGame {
   id: string
-  home_team_id: string
-  away_team_id: string
+  home_team_id: string | null
+  away_team_id: string | null
   currentPlay: unknown
   pregame?: unknown
   lineups_digest: string | null
@@ -190,8 +205,8 @@ export async function storedLineupsDigest(
   db: Trx,
   game: {
     id: string
-    home_team_id: string
-    away_team_id: string
+    home_team_id: string | null
+    away_team_id: string | null
     currentPlay: unknown
     pregame?: unknown
     lineups_digest: string | null

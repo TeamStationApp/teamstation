@@ -93,6 +93,8 @@ export async function withdrawnPlayers(
         .end()
         .as('teamId')
     ])
+    // A line is withdrawn from a team's side: an open side has none.
+    .$narrowType<{ teamId: string }>()
     // One array parameter: a merged team's games can outnumber a statement's
     // 65535.
     .where('game_withdrawn_players.game_id', '=', anyOf([...new Set(gameIds)]))

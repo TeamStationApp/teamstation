@@ -3,6 +3,7 @@ import { Router } from 'express'
 import type { Kysely } from 'kysely'
 
 import { badRequest, gone, notFound, unauthorized } from '../../common/errors'
+import { namedTeamIds, OPEN_SIDE_NAME } from '../../common/openSides'
 import { canFilm, roleScopes } from '../access'
 import { lockKeys } from '../db/advisoryLocks'
 import type { Database } from '../db/database'
@@ -146,10 +147,11 @@ export function directorRoutes(
       if (actor == null) throw unauthorized()
       const gameId = pathParam(req.params.gameId)
 
+      // An open side joins no team: it is TBD and films for nobody.
       const game = await db
         .selectFrom('games')
-        .innerJoin('teams as home', 'home.id', 'games.home_team_id')
-        .innerJoin('teams as away', 'away.id', 'games.away_team_id')
+        .leftJoin('teams as home', 'home.id', 'games.home_team_id')
+        .leftJoin('teams as away', 'away.id', 'games.away_team_id')
         .select([
           'games.id as id',
           'games.start_at as startAt',
@@ -163,7 +165,7 @@ export function directorRoutes(
       if (game == null) throw notFound()
 
       const scopes = await roleScopes(db, actor.userId, actor.isAdmin)
-      const teamId = [game.homeTeamId, game.awayTeamId].find(id =>
+      const teamId = namedTeamIds(game.homeTeamId, game.awayTeamId).find(id =>
         canFilm(scopes, id)
       )
       if (teamId == null) throw notFound()
@@ -210,7 +212,7 @@ export function directorRoutes(
           label: cameraName ?? options.deviceLabel,
           live: options.live,
           sessionSecret: options.sessionSecret,
-          videoTitle: `${game.awayTeamName} at ${game.homeTeamName}`,
+          videoTitle: `${game.awayTeamName ?? OPEN_SIDE_NAME} at ${game.homeTeamName ?? OPEN_SIDE_NAME}`,
           directorClaimed: true
         })
         const { key, ...row } = created

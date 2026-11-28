@@ -442,6 +442,7 @@ describe('U15 game sponsor logos', function () {
           .selectFrom('games')
           .select('home_team_id')
           .where('id', '=', gameId)
+          .$narrowType<{ home_team_id: string }>()
           .executeTakeFirstOrThrow()
       ).home_team_id
       const streamId = makeId('liveStream')

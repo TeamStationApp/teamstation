@@ -9,6 +9,7 @@ import {
   unauthorized
 } from '../../common/errors'
 import { asGamePlan, MAX_PLAN_INNINGS } from '../../common/gamePlan'
+import { namedTeamIds } from '../../common/openSides'
 import {
   canScore,
   canSeeGame,
@@ -26,11 +27,12 @@ import {
   planGameState,
   saveGamePlan
 } from '../games/gamePlans'
+import type { GameSideIds } from '../games/namedSides'
 import { cleanBody } from '../jsonBody'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 
-type PlannedGame = PlanGame & { home_team_id: string; away_team_id: string }
+type PlannedGame = PlanGame & GameSideIds
 
 /**
  * A coach's per-inning game plans. Each side's plan is read and saved only
@@ -100,8 +102,11 @@ export function gamePlanRoutes(db: Kysely<Database>): Router {
       if (actor == null) throw unauthorized()
       const game = await visibleGame(actor, pathParam(req.params.gameId))
       const teams = await plannedTeams(actor, game)
-      const side = async (teamId: string): Promise<SidePlan | null> =>
-        teams.includes(teamId) ? await loadSidePlan(db, game, teamId) : null
+      // An open side has no team, and so no plan.
+      const side = async (teamId: string | null): Promise<SidePlan | null> =>
+        teamId != null && teams.includes(teamId)
+          ? await loadSidePlan(db, game, teamId)
+          : null
       const [away, home] = await Promise.all([
         side(game.away_team_id),
         side(game.home_team_id)
@@ -141,8 +146,8 @@ export function gamePlanRoutes(db: Kysely<Database>): Router {
       const game = await visibleGame(actor, pathParam(req.params.gameId))
       const teamId = pathParam(req.params.teamId)
       const scopes = await roleScopes(db, actor.userId, actor.isAdmin)
-      const scores = [game.away_team_id, game.home_team_id].some(id =>
-        canScore(scopes, id)
+      const scores = namedTeamIds(game.away_team_id, game.home_team_id).some(
+        id => canScore(scopes, id)
       )
       if (
         !scores &&

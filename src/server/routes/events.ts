@@ -65,6 +65,7 @@ import { requireVisibleGame } from '../events/requireVisibleGame'
 import { namedScoringAuthorship } from '../events/scoringAuthorship'
 import { storedLineupsDigest } from '../events/teamLineups'
 import { playForWire } from '../events/wireRecords'
+import { type GameSideIds, requireNamedSides } from '../games/namedSides'
 import { swapOrReset } from '../games/resetSwap'
 import { gameSwapEffect } from '../games/swapEffect'
 import { requireActor } from '../middleware/withAuth'
@@ -240,13 +241,14 @@ export function eventRoutes(
           {
             write: async claim =>
               await atomic(db, async trx => {
-                const game = await trx
+                const found = await trx
                   .selectFrom('games')
                   .select(['home_team_id', 'away_team_id'])
                   .where('id', '=', gameId)
                   .forUpdate()
                   .executeTakeFirst()
-                if (game == null) throw notFound()
+                if (found == null) throw notFound()
+                const game = requireNamedSides(found)
                 const scopes = await roleScopes(
                   trx,
                   actor.userId,
@@ -615,7 +617,7 @@ export function eventRoutes(
           const done = await atomic(db, async trx => {
             await lockKeys(trx, ['creation:parent-graph', `game:${gameId}`])
             await lockPlayerEdits(trx)
-            const game = await trx
+            const found = await trx
               .selectFrom('games')
               .select([
                 'id',
@@ -629,7 +631,8 @@ export function eventRoutes(
               .where('id', '=', gameId)
               .forUpdate()
               .executeTakeFirst()
-            if (game == null) throw notFound()
+            if (found == null) throw notFound()
+            const game = requireNamedSides(found)
             const scorers = await roleScopes(trx, actor.userId, actor.isAdmin)
             if (
               !canScore(scorers, game.home_team_id) &&
@@ -762,10 +765,7 @@ interface StoredGameAnswer {
 async function storedGameRead(
   db: Kysely<Database>,
   gameId: string,
-  halves: (game: {
-    home_team_id: string
-    away_team_id: string
-  }) => Promise<readonly string[]>,
+  halves: (game: GameSideIds) => Promise<readonly string[]>,
   reader: Reader | undefined,
   held?: StoredPlay[]
 ): Promise<{

@@ -4,6 +4,7 @@ import type { UmpireSchedulePage } from '../../common/api'
 import { badRequest, forbidden, notFound } from '../../common/errors'
 import { calendarDateText } from '../../common/groupCreation'
 import { initialUmpireGame } from '../../common/nextGame'
+import { OPEN_SIDE_NAME, wireSideId } from '../../common/openSides'
 import { umpirePositions } from '../../common/umpires'
 import {
   umpireColumns,
@@ -491,10 +492,17 @@ async function sortedSchedule(
       timezone: game.timezone,
       date: gameDate(game),
       status: game.status,
-      home: teams.find(t => t.id === game.home_team_id)!.name,
-      away: teams.find(t => t.id === game.away_team_id)!.name,
-      homeTeamId: game.home_team_id,
-      awayTeamId: game.away_team_id,
+      // An open side is TBD, with the id `''`.
+      home:
+        game.home_team_id == null
+          ? OPEN_SIDE_NAME
+          : teams.find(t => t.id === game.home_team_id)!.name,
+      away:
+        game.away_team_id == null
+          ? OPEN_SIDE_NAME
+          : teams.find(t => t.id === game.away_team_id)!.name,
+      homeTeamId: wireSideId(game.home_team_id),
+      awayTeamId: wireSideId(game.away_team_id),
       location:
         game.latitude != null && game.longitude != null
           ? `${game.latitude},${game.longitude}`

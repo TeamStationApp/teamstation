@@ -44,6 +44,7 @@ import { resolveScoringGame } from '../scoring/openRow'
 import { contextOf } from '../scoring/replayContext'
 import { notifyGameChange } from '../socket/gameChanges'
 import { noteScopeChange } from '../socket/syncRevision'
+import { requireNamedSides } from './namedSides'
 import { type GameAvailability, gameAvailability } from './rosterAvailability'
 import { hasScoringEventsSql } from './scoringActivity'
 
@@ -79,13 +80,14 @@ export async function setRostered(
   const write = async (trx: Transaction<Database>): Promise<Unrostered> => {
     await lockPlayerEdits(trx)
     await lockGameTeams(trx, gameId)
-    const game = await trx
+    const found = await trx
       .selectFrom('games')
       .selectAll()
       .where('id', '=', gameId)
       .forUpdate()
       .executeTakeFirst()
-    if (game == null) throw notFound()
+    if (found == null) throw notFound()
+    const game = requireNamedSides(found)
     const teamId = body.side === 'away' ? game.away_team_id : game.home_team_id
     if (!canCoach(await roleScopes(trx, actor.userId, actor.isAdmin), teamId))
       throw forbidden('Only a coach or assistant may change game availability')

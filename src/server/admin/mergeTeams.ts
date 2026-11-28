@@ -12,6 +12,7 @@ import {
   holdingEventChildren,
   rebuildEventChildren
 } from '../events/eventChildren'
+import { requireNamedSides } from '../games/namedSides'
 import { recordNamesTeam, retargetGameTeams } from '../games/retargetTeams'
 import { requireAdministrator } from '../groups/adminGuard'
 import { freeLabel, namesOnSide } from '../groups/noticePolicy'
@@ -78,8 +79,9 @@ export interface MergeTeamsReport {
 interface GameRow {
   id: string
   season_id: string | null
-  home_team_id: string
-  away_team_id: string
+  /** Null for an open side, whose team is not known yet. */
+  home_team_id: string | null
+  away_team_id: string | null
   start_at: Date
   events: number
 }
@@ -93,6 +95,9 @@ interface GameRow {
  * Houser, which is the same game seen from two dugouts.
  */
 function fixtureKey(game: GameRow): string {
+  // A game with an open side names no second team: it is its own fixture.
+  if (game.home_team_id == null || game.away_team_id == null)
+    return `open|${game.id}`
   const pair = [game.home_team_id, game.away_team_id].sort().join('|')
   return `${game.season_id ?? ''}|${game.start_at.toISOString()}|${pair}`
 }
@@ -224,20 +229,23 @@ async function carryWithdrawals(
     .select('home_team_id')
     .where('id', '=', retiredGameId)
     .executeTakeFirstOrThrow()
-  const kept = await trx
-    .selectFrom('games')
-    .innerJoin('teams as home', 'home.id', 'games.home_team_id')
-    .innerJoin('teams as away', 'away.id', 'games.away_team_id')
-    .select([
-      'games.id',
-      'games.guests',
-      'games.home_team_id',
-      'games.away_team_id',
-      'home.name as homeName',
-      'away.name as awayName'
-    ])
-    .where('games.id', '=', keptGameId)
-    .executeTakeFirstOrThrow()
+  // Twins have named sides: each was scheduled against the merged team.
+  const kept = requireNamedSides(
+    await trx
+      .selectFrom('games')
+      .innerJoin('teams as home', 'home.id', 'games.home_team_id')
+      .innerJoin('teams as away', 'away.id', 'games.away_team_id')
+      .select([
+        'games.id',
+        'games.guests',
+        'games.home_team_id',
+        'games.away_team_id',
+        'home.name as homeName',
+        'away.name as awayName'
+      ])
+      .where('games.id', '=', keptGameId)
+      .executeTakeFirstOrThrow()
+  )
   const flipped = retired.home_team_id !== kept.home_team_id
   const names = {
     away: await namesOnSide(trx, kept, 'away'),

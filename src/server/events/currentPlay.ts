@@ -7,6 +7,7 @@ import {
   type StoredGame
 } from '../../common/scoring/session'
 import type { Database } from '../db/database'
+import type { GameSideIds } from '../games/namedSides'
 import { contextOf } from '../scoring/replayContext'
 
 /**
@@ -27,7 +28,7 @@ import { contextOf } from '../scoring/replayContext'
 export async function pregameFold(
   db: Kysely<Database>,
   gameId: string,
-  game: { home_team_id: string; away_team_id: string; currentPlay: unknown },
+  game: GameSideIds & { currentPlay: unknown },
   resolved: StoredGame
 ): Promise<() => Promise<CurrentPlay | null>> {
   const asStored = async (): Promise<CurrentPlay | null> => resolved.currentPlay

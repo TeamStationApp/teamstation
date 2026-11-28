@@ -4,6 +4,7 @@ import { type Kysely, sql } from 'kysely'
 import type { ListCounts, Page, SeasonGame } from '../../common/api'
 import { badRequest, notFound, unauthorized } from '../../common/errors'
 import { nextGameIndex } from '../../common/nextGame'
+import { OPEN_SIDE_NAME, wireSideId } from '../../common/openSides'
 import {
   type AdminScopes,
   canSeeTeam,
@@ -381,10 +382,11 @@ export async function scheduleOf(
   if (teamScope != null && !teamScope.isAdmin && teamScope.teamIds.size === 0) {
     return []
   }
+  // An open side joins no team: it is TBD (`common/openSides.ts`).
   let query = db
     .selectFrom('games')
-    .innerJoin('teams as home', 'home.id', 'games.home_team_id')
-    .innerJoin('teams as away', 'away.id', 'games.away_team_id')
+    .leftJoin('teams as home', 'home.id', 'games.home_team_id')
+    .leftJoin('teams as away', 'away.id', 'games.away_team_id')
     .leftJoin(
       'teams as withdrawn',
       'withdrawn.id',
@@ -597,12 +599,13 @@ export async function scheduleOf(
       isUmpire: umpiring.has(game.id),
       homeLogoPath: game.homeLogoPath,
       awayLogoPath: game.awayLogoPath,
-      homeTeamId: game.homeTeamId,
-      awayTeamId: game.awayTeamId,
-      homeTeamName: game.homeTeamName,
-      awayTeamName: game.awayTeamName,
-      homeTeamExternal: game.homeTeamKind === 'external',
-      awayTeamExternal: game.awayTeamKind === 'external',
+      homeTeamId: wireSideId(game.homeTeamId),
+      awayTeamId: wireSideId(game.awayTeamId),
+      homeTeamName: game.homeTeamName ?? OPEN_SIDE_NAME,
+      awayTeamName: game.awayTeamName ?? OPEN_SIDE_NAME,
+      // An open side is no team of the app's: it shows as a one-off opponent.
+      homeTeamExternal: (game.homeTeamKind ?? 'external') === 'external',
+      awayTeamExternal: (game.awayTeamKind ?? 'external') === 'external',
       seasonId: game.seasonId,
       startAt: toIso(game.startAt),
       venue: game.venue,

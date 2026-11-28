@@ -13,6 +13,7 @@ import { lockPlayerEdits } from '../admin/people'
 import { lockGameTeams } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
+import { requireNamedSides } from '../games/namedSides'
 import { assertStoredScoringRoles } from '../scoring/mergeConflicts'
 import { notifyPlaysChanged } from '../socket/gameChanges'
 import { noteScopeChange } from '../socket/syncRevision'
@@ -119,7 +120,7 @@ export async function addPlayEvents(
   return await atomic(db, async trx => {
     await lockPlayerEdits(trx)
     await lockGameTeams(trx, gameId)
-    const game = await trx
+    const row = await trx
       .selectFrom('games')
       .select([
         'id',
@@ -132,7 +133,8 @@ export async function addPlayEvents(
       .where('id', '=', gameId)
       .forUpdate()
       .executeTakeFirst()
-    if (game == null) throw notFound()
+    if (row == null) throw notFound()
+    const game = requireNamedSides(row)
     if (game.scoringOwner === 'teamstation')
       throw conflict('This game is scored in TeamStation')
     const stored = new Map(

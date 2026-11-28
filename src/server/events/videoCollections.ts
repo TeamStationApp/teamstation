@@ -89,8 +89,9 @@ export async function accessibleVideoGames(
 ): Promise<
   Array<{
     gameId: string
-    homeTeamId: string
-    awayTeamId: string
+    /** Null for an open side, whose team is not known yet. */
+    homeTeamId: string | null
+    awayTeamId: string | null
     startAt: Date
     videoId: string
     uploadedAt: Date

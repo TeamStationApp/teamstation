@@ -2,6 +2,7 @@ import type { Kysely, Selectable } from 'kysely'
 
 import { storedGuests } from '../../common/guests'
 import { formatName, type NamedPerson, shortName } from '../../common/names'
+import { wireSideId } from '../../common/openSides'
 import { teamsOfRow } from '../../common/teamLists'
 import { storedUnrostered } from '../../common/unroster'
 import { type OnePerson, onePerson } from '../admin/people'
@@ -116,7 +117,8 @@ export function umpireIsPlaying(
     side =>
       person.gumboIds.some(id => guests[side].includes(id)) ||
       (person.teamIds.includes(
-        side === 'home' ? game.home_team_id : game.away_team_id
+        // An open side has no team anybody plays for.
+        wireSideId(side === 'home' ? game.home_team_id : game.away_team_id)
       ) &&
         !person.gumboIds.some(id => excluded[side].includes(id)))
   )

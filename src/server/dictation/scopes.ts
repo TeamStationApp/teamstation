@@ -3,6 +3,7 @@ import type { Kysely } from 'kysely'
 
 import { asLiteral } from '../../common/asLiteral'
 import { forbidden, unavailable } from '../../common/errors'
+import { namedTeamIds } from '../../common/openSides'
 import { type Tool, toolSchema } from '../../common/scoring/actions'
 import {
   type RosterTool,
@@ -63,13 +64,19 @@ async function authoriseRoster(
     .where('id', '=', gameId)
     .executeTakeFirstOrThrow()
   const roles = await roleScopes(db, actor.userId, actor.isAdmin)
-  if (canScore(roles, game.home_team_id) || canScore(roles, game.away_team_id))
-    return
   if (
-    side != null &&
-    canCoach(roles, side === 'home' ? game.home_team_id : game.away_team_id)
+    namedTeamIds(game.home_team_id, game.away_team_id).some(teamId =>
+      canScore(roles, teamId)
+    )
   )
     return
+  const sideTeam =
+    side == null
+      ? null
+      : side === 'home'
+        ? game.home_team_id
+        : game.away_team_id
+  if (sideTeam != null && canCoach(roles, sideTeam)) return
   throw forbidden(
     "Only the team's coach, an assistant or a scorekeeper may change its lineup"
   )

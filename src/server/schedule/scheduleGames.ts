@@ -3,6 +3,7 @@ import { type Kysely, sql, type Transaction } from 'kysely'
 import { HttpError } from '../../common/errors'
 import { type GameIntent, systemCancelled } from '../../common/gameApprovals'
 import { makeId } from '../../common/ids'
+import { wireSideId } from '../../common/openSides'
 import {
   asScheduleGameRow,
   type GameStatus,
@@ -93,10 +94,12 @@ export async function scheduleRights(
 /** Whether these rights may schedule `teamId`'s games in `seasonId`. */
 export function mayScheduleIn(
   rights: ScheduleRights,
-  teamId: string,
+  /** Null for an open side, which only its season or a site admin speaks for. */
+  teamId: string | null,
   seasonId: string | null
 ): boolean {
-  if (rights.siteAdmin || rights.teamAdminIds.has(teamId)) return true
+  if (rights.siteAdmin || (teamId != null && rights.teamAdminIds.has(teamId)))
+    return true
   return seasonId != null && rights.seasonIds.has(seasonId)
 }
 
@@ -121,8 +124,9 @@ class RowError extends Error {
 
 interface HeldGame {
   id: string
-  home_team_id: string
-  away_team_id: string
+  /** Null for an open side, whose team is not known yet. */
+  home_team_id: string | null
+  away_team_id: string | null
   season_id: string | null
   start_at: Date
   venue: string | null
@@ -383,8 +387,8 @@ async function applyRow(
     if (held != null) {
       context.withdrawn = systemCancelled(held.cancellation_reason)
       context.previous = {
-        homeTeamId: held.home_team_id,
-        awayTeamId: held.away_team_id,
+        homeTeamId: wireSideId(held.home_team_id),
+        awayTeamId: wireSideId(held.away_team_id),
         seasonId: held.season_id,
         startAt: held.start_at.toISOString(),
         venue: held.venue,
@@ -400,7 +404,13 @@ async function applyRow(
         )
       }
       mustMaySchedule(context, held.season_id)
+      // A game whose opponent is not known yet keeps its open side: the row
+      // is answered by its other fields, as a row naming an undecided
+      // opponent is.
+      const heldOpponent =
+        held.home_team_id === teamId ? held.away_team_id : held.home_team_id
       if (
+        heldOpponent != null &&
         opponentKey != null &&
         row.opponent != null &&
         !('name' in row.opponent && isUndeterminedName(row.opponent.name))
@@ -411,10 +421,7 @@ async function applyRow(
         // opponent's id. Asked before the opponent can change, so a game
         // TeamStation scored records it too.
         const holder = await idHolder(trx, opponentKey)
-        const opponent = await followMerges(
-          trx,
-          held.home_team_id === teamId ? held.away_team_id : held.home_team_id
-        )
+        const opponent = await followMerges(trx, heldOpponent)
         if (
           holder.free &&
           (await isExternal(trx, opponent)) &&
@@ -638,19 +645,20 @@ async function updateHeld(
     exhibition?: boolean
     timezone?: string
   } = {}
+  const otherSide =
+    game.home_team_id === sidesFor ? game.away_team_id : game.home_team_id
   if (
     sidesFor != null &&
     row.side != null &&
+    // An open side is left where it is, as its opponent is.
+    otherSide != null &&
     (game.home_team_id === sidesFor) !== (row.side === 'home') &&
     (await maySwapSides(trx, {
       id: held.id,
       currentPlay: game.currentPlay,
       status: game.status
     })) &&
-    (await isExternal(
-      trx,
-      game.home_team_id === sidesFor ? game.away_team_id : game.home_team_id
-    ))
+    (await isExternal(trx, otherSide))
   ) {
     await swapGameSides(trx, held.id)
     swapped = true
@@ -822,6 +830,8 @@ async function changeOpponent(
     .executeTakeFirstOrThrow()
   const storedOpponent =
     game.home_team_id === teamId ? game.away_team_id : game.home_team_id
+  // An open side stays open: the schedule importer never names its team.
+  if (storedOpponent == null) return false
   const opponentId = await followMerges(trx, storedOpponent)
   const current = await trx
     .selectFrom('teams')
@@ -1075,7 +1085,11 @@ async function mustHaveNoTwin(
  */
 async function repointOpponent(
   trx: Transaction<Database>,
-  game: { id: string; home_team_id: string; away_team_id: string },
+  game: {
+    id: string
+    home_team_id: string | null
+    away_team_id: string | null
+  },
   oldTeamId: string,
   newTeamId: string
 ): Promise<void> {

@@ -1,6 +1,7 @@
 import { sql, type Transaction } from 'kysely'
 
 import { unavailable } from '../../common/errors'
+import { namedTeamIds } from '../../common/openSides'
 import type { Database } from './database'
 
 /**
@@ -70,9 +71,12 @@ export const GAME_TEAMS_ROUNDS = 5
 export async function lockGameTeams(
   trx: Transaction<Database>,
   gameId: string
-): Promise<{ homeTeamId: string; awayTeamId: string } | undefined> {
+): Promise<
+  { homeTeamId: string | null; awayTeamId: string | null } | undefined
+> {
+  // An open side (null) is no team to lock.
   const read = async (): Promise<
-    { homeTeamId: string; awayTeamId: string } | undefined
+    { homeTeamId: string | null; awayTeamId: string | null } | undefined
   > => {
     const row = await trx
       .selectFrom('games')
@@ -86,7 +90,7 @@ export async function lockGameTeams(
   let teams = await read()
   for (let round = 0; round < GAME_TEAMS_ROUNDS; round += 1) {
     if (teams == null) return undefined
-    await lockTeams(trx, [teams.homeTeamId, teams.awayTeamId])
+    await lockTeams(trx, namedTeamIds(teams.homeTeamId, teams.awayTeamId))
     const again = await read()
     if (
       again == null ||

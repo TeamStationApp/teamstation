@@ -427,8 +427,8 @@ describe('swapping a game’s home and away teams', function () {
     expect(game.currentPlay).equals(null)
     expect(game.pregame).not.equals(null)
     const setup = recordOf(atBatOf(game, false), {
-      away: { id: game.away_team_id },
-      home: { id: game.home_team_id }
+      away: { id: game.away_team_id! },
+      home: { id: game.home_team_id! }
     })!.setupBefore
     const reopened = await open('gam_saved', true)
     expect(reopened.state.liveData.linescore.offense.batter?.id).equals(10)
@@ -762,12 +762,12 @@ describe('swapping a game’s home and away teams', function () {
     // still refused.
     expect(game.lineups_digest).not.equals(before.lineups_digest)
     const was = recordOf(atBatOf(before, false), {
-      away: { id: before.away_team_id },
-      home: { id: before.home_team_id }
+      away: { id: before.away_team_id! },
+      home: { id: before.home_team_id! }
     })!
     const now = recordOf(atBatOf(game, false), {
-      away: { id: game.away_team_id },
-      home: { id: game.home_team_id }
+      away: { id: game.away_team_id! },
+      home: { id: game.home_team_id! }
     })!
     expect(now.setupBefore).deep.equals(was.setupBefore)
     expect(now.actions).deep.equals(was.actions)

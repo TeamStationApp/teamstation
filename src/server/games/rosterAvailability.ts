@@ -35,8 +35,8 @@ export async function gameAvailability<Rostered extends boolean>(
   db: Kysely<Database>,
   game: {
     id: string
-    home_team_id: string
-    away_team_id: string
+    home_team_id: string | null
+    away_team_id: string | null
     guests: unknown
     unrostered: unknown
     currentPlay: unknown
@@ -168,8 +168,13 @@ export async function gameAvailability<Rostered extends boolean>(
   }
   const roster = options.roster
     ? await Promise.all([
-        teamRoster(db, undefined, game.away_team_id),
-        teamRoster(db, undefined, game.home_team_id)
+        // An open side has no roster: it has no team yet.
+        game.away_team_id == null
+          ? []
+          : teamRoster(db, undefined, game.away_team_id),
+        game.home_team_id == null
+          ? []
+          : teamRoster(db, undefined, game.home_team_id)
       ]).then(([away, home]) => ({ away, home }))
     : null
   return {

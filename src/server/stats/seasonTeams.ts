@@ -134,6 +134,10 @@ export async function seasonResults(
     .where('status', '=', 'final')
     .where('home_score', 'is not', null)
     .where('away_score', 'is not', null)
+    // A game with an open side has no result: it was never scored.
+    .where('home_team_id', 'is not', null)
+    .where('away_team_id', 'is not', null)
+    .$narrowType<{ homeTeamId: string; awayTeamId: string }>()
     .orderBy('start_at')
     .orderBy('id')
     .execute()
@@ -162,14 +166,17 @@ export async function seasonParticipantCounts(
         .selectFrom('games')
         .select(['season_id as seasonId', 'home_team_id as teamId'])
         .where('season_id', 'in', seasonIds)
-        .$narrowType<{ seasonId: string }>()
+        // An open side is no participant.
+        .where('home_team_id', 'is not', null)
+        .$narrowType<{ seasonId: string; teamId: string }>()
     )
     .union(
       db
         .selectFrom('games')
         .select(['season_id as seasonId', 'away_team_id as teamId'])
         .where('season_id', 'in', seasonIds)
-        .$narrowType<{ seasonId: string }>()
+        .where('away_team_id', 'is not', null)
+        .$narrowType<{ seasonId: string; teamId: string }>()
     )
   const rows = await db
     .selectFrom(participants.as('participants'))

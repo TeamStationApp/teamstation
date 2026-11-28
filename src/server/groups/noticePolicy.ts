@@ -24,6 +24,7 @@ import {
   playedForOther,
   replayedGame
 } from '../games/guestChecks'
+import { type GameSideIds, hasNamedSides } from '../games/namedSides'
 import { hasScoringEventsSql, isRealPlaySql } from '../games/scoringActivity'
 import { reconcileUnbegunLineup } from '../games/unroster'
 import {
@@ -441,7 +442,7 @@ async function hasStoredPlay(trx: Db, game: { id: string }): Promise<boolean> {
  * the team's side, and the side the add joined last.
  */
 function sideOf(
-  game: { home_team_id: string; away_team_id: string; guests: unknown },
+  game: GameSideIds & { guests: unknown },
   terms: PlayerAddTerms,
   gumbos: ReadonlySet<number>
 ): 'away' | 'home' {
@@ -495,8 +496,10 @@ async function playedGames(
       ])
       .where('id', '=', terms.gameId!)
       .executeTakeFirst()
+    // A game with an open side has not been played: its first write fills it.
     if (
       game == null ||
+      !hasNamedSides(game) ||
       !((await gameStarted(trx, game)) || (await hasStoredPlay(trx, game)))
     )
       return []
@@ -582,7 +585,8 @@ async function playedGames(
       ])
     )
     .execute()
-  const covered = games.map(game => ({
+  // Played games name both their teams; an open side is not yet played.
+  const covered = games.filter(hasNamedSides).map(game => ({
     ...game,
     side: sideOf(game, terms, new Set())
   }))
@@ -625,7 +629,7 @@ async function playedGames(
     .where('user_id', 'in', userIds)
     .where('pool', '=', true)
     .execute()
-  for (const game of underWay) {
+  for (const game of underWay.filter(hasNamedSides)) {
     if (covered.some(row => row.id === game.id)) continue
     if (pool.some(row => row.game_id === game.id)) continue
     const side = sideOf(game, terms, new Set())

@@ -1,5 +1,6 @@
 import type { Kysely } from 'kysely'
 
+import { namedTeamIds } from '../../common/openSides'
 import type { Database } from '../db/database'
 import type { Clock } from '../groups/requests'
 import { schedulingRecipients } from '../groups/rights'
@@ -73,13 +74,12 @@ export async function cancelAsRescheduled(
     .where('status', '=', 'pending')
     .execute()
   for (const game of cancelled) {
-    tally(tallies, game.home_team_id, game.season_id).removed++
-    tally(tallies, game.away_team_id, game.season_id).removed++
+    const teams = namedTeamIds(game.home_team_id, game.away_team_id)
+    for (const teamId of teams) tally(tallies, teamId, game.season_id).removed++
     // Cancelled, it leaves its teams' records and its season's schedule:
     // `noteGameFigures`, of the row as the update left it.
     noteScopeChange(trx, { gameId: game.id })
-    noteScopeChange(trx, { teamId: game.home_team_id })
-    noteScopeChange(trx, { teamId: game.away_team_id })
+    for (const teamId of teams) noteScopeChange(trx, { teamId })
     if (game.season_id != null)
       noteScopeChange(trx, { seasonId: game.season_id })
   }

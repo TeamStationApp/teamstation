@@ -3,6 +3,7 @@ import type { Kysely } from 'kysely'
 import { eventLocalRange, zoneName } from '../../common/eventTime'
 import type { GameRequestTerms } from '../../common/gameApprovals'
 import type { Database } from '../db/database'
+import { hasNamedSides } from '../games/namedSides'
 import { adminRecipients } from '../groups/rights'
 import { recordNotice } from '../venues/venueNotices'
 
@@ -86,7 +87,8 @@ export async function gameNeedsAttention(
     ])
     .where('id', '=', gameId)
     .executeTakeFirst()
-  if (game?.schedule_preview_id == null) return
+  // A published game names both its teams; one with an open side was not.
+  if (game?.schedule_preview_id == null || !hasNamedSides(game)) return
   await notice(
     db,
     {

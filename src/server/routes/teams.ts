@@ -14,6 +14,11 @@ import {
   MINIMUM_OVERRIDE_REPLAY_PROTOCOL,
   PROTOCOL_HEADER
 } from '../../common/gameSocket'
+import {
+  namedTeamIds,
+  OPEN_SIDE_NAME,
+  wireSideId
+} from '../../common/openSides'
 import { scoreboardOpen } from '../../common/scoreboard'
 import { usesOverrideSlots } from '../../common/scoring/actions'
 import { inningsPitched } from '../../common/statExtras'
@@ -165,7 +170,11 @@ export function teamRoutes(
           games.map(game => game.gameId)
         )
         const ids = [
-          ...new Set(games.flatMap(game => [game.homeTeamId, game.awayTeamId]))
+          ...new Set(
+            games.flatMap(game =>
+              namedTeamIds(game.homeTeamId, game.awayTeamId)
+            )
+          )
         ]
         const teams =
           ids.length === 0
@@ -193,7 +202,7 @@ export function teamRoutes(
         const followed = new Set(follows.map(row => row.team_id))
         const latest = new Map<string, number>()
         for (const game of games) {
-          for (const id of [game.homeTeamId, game.awayTeamId])
+          for (const id of namedTeamIds(game.homeTeamId, game.awayTeamId))
             latest.set(
               id,
               Math.max(latest.get(id) ?? 0, game.uploadedAt.getTime())
@@ -459,10 +468,9 @@ export function teamRoutes(
         .select(['home_team_id', 'away_team_id'])
         .where('season_id', 'in', seasonIds)
         .execute()
-      for (const game of games) {
-        opponents.add(game.home_team_id)
-        opponents.add(game.away_team_id)
-      }
+      for (const game of games)
+        for (const teamId of namedTeamIds(game.home_team_id, game.away_team_id))
+          opponents.add(teamId)
     }
     const found = [...new Set([...members, ...opponents])]
     if (found.length === 0) return []
@@ -648,12 +656,15 @@ export function teamRoutes(
         actor == null
           ? null
           : await adminScopes(db, actor.userId, actor.isAdmin)
+      // A side whose team is not known yet is TBD and names no team.
+      const sideTeams = namedTeamIds(game.home_team_id, game.away_team_id)
       const mayOverride =
         editors != null &&
-        (canManageTeam(editors, game.home_team_id) ||
-          canManageTeam(editors, game.away_team_id))
+        sideTeams.some(teamId => canManageTeam(editors, teamId))
 
-      const names = await teamNames(db, [game.home_team_id, game.away_team_id])
+      const names = await teamNames(db, sideTeams)
+      const nameOf = (teamId: string | null): string =>
+        teamId == null ? OPEN_SIDE_NAME : (names.get(teamId) ?? '')
       // Whether to offer Score Game: a scorekeeper of either team, which
       // every administrator of it is. The events route holds the same rule.
       // And whether to offer DJ Game: a songkeeper of either team, which
@@ -664,21 +675,25 @@ export function teamRoutes(
 
       // Each side's record in the season this game was played in.
       const recordRows = await teamRecords(db, {
-        teamIds: [game.home_team_id, game.away_team_id],
+        teamIds: sideTeams,
         seasonId: game.season_id
       })
-      const logos = await db
-        .selectFrom('teams')
-        .select(['id', 'logo_path'])
-        .where('id', 'in', [game.home_team_id, game.away_team_id])
-        .execute()
-      const logoOf = (teamId: string): string | null =>
+      const logos =
+        sideTeams.length === 0
+          ? []
+          : await db
+              .selectFrom('teams')
+              .select(['id', 'logo_path'])
+              .where('id', 'in', sideTeams)
+              .execute()
+      const logoOf = (teamId: string | null): string | null =>
         imageUrl(
           media.space,
           logos.find(row => row.id === teamId)?.logo_path ?? null
         )
 
-      const recordOf = (teamId: string): string | null => {
+      const recordOf = (teamId: string | null): string | null => {
+        if (teamId == null) return null
         const row = recordRows.find(item => item.teamId === teamId)
         if (row == null || row.w + row.l + row.t === 0) return null
         return row.t > 0 ? `${row.w}–${row.l}–${row.t}` : `${row.w}–${row.l}`
@@ -708,7 +723,10 @@ export function teamRoutes(
       const assigned =
         actor == null || nonMemberView
           ? undefined
-          : await givenRolesOnTeams(db, [game.away_team_id, game.home_team_id])
+          : await givenRolesOnTeams(
+              db,
+              namedTeamIds(game.away_team_id, game.home_team_id)
+            )
       const availability = await gameAvailability(db, game, {
         roster: false,
         // The guests are shown only to a member.
@@ -732,12 +750,12 @@ export function teamRoutes(
             : availability.guestPlayers,
         pendingApproval: pending.pendingApproval,
         pendingRequestId: pending.pendingRequestId,
-        homeTeamId: game.home_team_id,
-        awayTeamId: game.away_team_id,
+        homeTeamId: wireSideId(game.home_team_id),
+        awayTeamId: wireSideId(game.away_team_id),
         // Which set of plays the game holds: one more after each reset.
         generation: game.play_generation,
-        homeTeamName: names.get(game.home_team_id) ?? '',
-        awayTeamName: names.get(game.away_team_id) ?? '',
+        homeTeamName: nameOf(game.home_team_id),
+        awayTeamName: nameOf(game.away_team_id),
         seasonId: game.season_id,
         startAt: toIso(game.start_at),
         venue: game.venue,
@@ -782,28 +800,31 @@ export function teamRoutes(
           : game.linescore,
         fenceDistanceFt: Number(game.resolved_fence_distance_ft),
         assignedRoles: {
-          away: assigned?.get(game.away_team_id)?.get(actor!.userId) ?? [],
-          home: assigned?.get(game.home_team_id)?.get(actor!.userId) ?? []
+          away:
+            (game.away_team_id == null
+              ? undefined
+              : assigned?.get(game.away_team_id)?.get(actor!.userId)) ?? [],
+          home:
+            (game.home_team_id == null
+              ? undefined
+              : assigned?.get(game.home_team_id)?.get(actor!.userId)) ?? []
         },
         canScore:
           !nonMemberView &&
           roles != null &&
-          (canScore(roles, game.home_team_id) ||
-            canScore(roles, game.away_team_id)),
+          sideTeams.some(teamId => canScore(roles, teamId)),
         canDj:
           !nonMemberView &&
           roles != null &&
-          (canKeepSongs(roles, game.home_team_id) ||
-            canKeepSongs(roles, game.away_team_id)),
+          sideTeams.some(teamId => canKeepSongs(roles, teamId)),
         coachSides:
           nonMemberView || roles == null
             ? []
-            : (['away', 'home'] as const).filter(side =>
-                canCoach(
-                  roles,
+            : (['away', 'home'] as const).filter(side => {
+                const teamId =
                   side === 'home' ? game.home_team_id : game.away_team_id
-                )
-              ),
+                return teamId != null && canCoach(roles, teamId)
+              }),
         // Whether this is the non-member view, so the app draws it as one.
         nonMemberView,
         // Whether anything TeamStation scored is stored, so it can be
@@ -1352,7 +1373,9 @@ async function averagesToDate(
     // A one-off belongs to no season, and the only honest answer for it is
     // visible games these two teams have played.
     teamIds:
-      seasonId == null ? [game.home_team_id, game.away_team_id] : undefined,
+      seasonId == null
+        ? namedTeamIds(game.home_team_id, game.away_team_id)
+        : undefined,
     // Up to and including this one, by when it was played. A game with no date
     // cannot be placed in the order, so it counts only for its own box score.
     playedBy: game.start_at == null ? undefined : new Date(game.start_at)

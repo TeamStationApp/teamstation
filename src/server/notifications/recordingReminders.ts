@@ -5,6 +5,7 @@ import {
   LOCAL_COPY_EXPIRING,
   RECORDING_UPLOAD
 } from '../../common/notifications'
+import { OPEN_SIDE_NAME } from '../../common/openSides'
 import type { Database } from '../db/database'
 import { labelFor } from '../live/streamKeys'
 
@@ -163,8 +164,8 @@ export async function recordLocalCopyWarnings(
   const streams = await db
     .selectFrom('live_streams')
     .innerJoin('games', 'games.id', 'live_streams.game_id')
-    .innerJoin('teams as home', 'home.id', 'games.home_team_id')
-    .innerJoin('teams as away', 'away.id', 'games.away_team_id')
+    .leftJoin('teams as home', 'home.id', 'games.home_team_id')
+    .leftJoin('teams as away', 'away.id', 'games.away_team_id')
     .select([
       'live_streams.id as id',
       'live_streams.game_id as gameId',
@@ -172,8 +173,8 @@ export async function recordLocalCopyWarnings(
       'live_streams.slot as slot',
       'live_streams.label as label',
       'live_streams.device_model as deviceModel',
-      'home.name as homeTeamName',
-      'away.name as awayTeamName',
+      sql<string>`coalesce(home.name, ${OPEN_SIDE_NAME})`.as('homeTeamName'),
+      sql<string>`coalesce(away.name, ${OPEN_SIDE_NAME})`.as('awayTeamName'),
       sql<number | null>`${lastReminder('revision')}`.as('take'),
       sql<number | null>`${lastEvent(LOCAL_COPY_EXPIRING, 'revision')}`.as(
         'lastWarning'

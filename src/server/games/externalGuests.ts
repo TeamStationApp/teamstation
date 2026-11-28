@@ -19,6 +19,7 @@ import {
   externalIdHolder
 } from '../teams/addPlayers'
 import { ensureGumboId, insertUser } from '../users/insertUser'
+import { requireNamedSides } from './namedSides'
 
 /**
  * The people an outside scorer names that have no TeamStation account, each
@@ -99,13 +100,14 @@ export async function ensureExternalGuests(
   return await atomic(db, async trx => {
     await lockPlayerEdits(trx)
     await lockGameTeams(trx, gameId)
-    const game = await trx
+    const found = await trx
       .selectFrom('games')
       .selectAll()
       .where('id', '=', gameId)
       .forUpdate()
       .executeTakeFirst()
-    if (game == null) throw notFound()
+    if (found == null) throw notFound()
+    const game = requireNamedSides(found)
     for (const side of new Set(guests.map(guest => guest.side)))
       if (!(await maySeat(trx, actor, game, side)))
         throw forbidden(
