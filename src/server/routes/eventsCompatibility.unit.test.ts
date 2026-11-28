@@ -142,7 +142,9 @@ describe('scoring record versions at the events route', () => {
     })
 
   it('rejects an unknown version before writing any play', async () => {
-    await withQueryReplies([], async db => {
+    // The one read is whether the game has a side open (`fillOpenSides`).
+    const sides = 'select "home_team_id", "away_team_id" from "games"'
+    await withQueryReplies([[sides, [row]]], async db => {
       await assert.rejects(
         request(db, 'POST', SCORING_FEATURES, {
           mode: 'live',

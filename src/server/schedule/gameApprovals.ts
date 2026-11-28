@@ -56,6 +56,7 @@ import { runsOf } from '../db/runs'
 import { atBatOf } from '../events/atBatInProgress'
 import { playsDigest, readPlays } from '../events/postPlays'
 import { hasNamedSides } from '../games/namedSides'
+import { mayScoreOpenSide } from '../games/openSides'
 import { gameSwapEffect } from '../games/swapEffect'
 import { maySwapSides, SWAP_REFUSED, swapGameSides } from '../games/swapSides'
 import {
@@ -2249,13 +2250,17 @@ export async function schedulingGame(
   for (const teamId of sideTeams)
     if (await canScheduleFor(db, fresh, { kind: 'team', id: teamId }))
       teamIds.push(teamId)
-  // A scorekeeper of either team may swap home and away, and nothing else.
+  // A scorekeeper of either team may swap home and away, and nothing else;
+  // of a game with an open side, whoever may start scoring it.
   const roles = await roleScopes(db, fresh.userId, fresh.isAdmin)
-  const scorer = sideTeams.some(teamId => canScore(roles, teamId))
+  const open = openSidesOf(materialGame(row)).length > 0
+  const scorer = open
+    ? mayScoreOpenSide(roles, row)
+    : sideTeams.some(teamId => canScore(roles, teamId))
   // A game with an open side is its season's to change as well
   // (`originalAdministrator`), whoever administers its named teams.
   const seasonHost =
-    openSidesOf(materialGame(row)).length > 0 &&
+    open &&
     row.season_id != null &&
     (await canScheduleFor(db, fresh, { kind: 'season', id: row.season_id }))
   if (teamIds.length === 0 && !scorer && !seasonHost) throw forbidden()

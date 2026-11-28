@@ -785,14 +785,27 @@ export function canCoach(scopes: RoleScopes, teamId: string): boolean {
  * scorekeeper of either team; otherwise each team they coach or assist.
  * Whoever may save a side's lineup is answered its players' first and last
  * names: he may correct a game-only player's, and his tools export the
- * lineup and match spoken names by them.
+ * lineup and match spoken names by them. A game with an open side lists its
+ * named teams; a scorekeeper of its season, who may start scoring it
+ * (`mayScoreOpenSide`), has them all, as its first scoring write gives each
+ * open side a team they score.
  */
 export function lineupTeams(
   scopes: RoleScopes,
-  game: { home_team_id: string | null; away_team_id: string | null }
+  game: {
+    home_team_id: string | null
+    away_team_id: string | null
+    season_id?: string | null
+  }
 ): string[] {
   const teams = namedTeamIds(game.away_team_id, game.home_team_id)
   if (teams.some(teamId => canScore(scopes, teamId))) return teams
+  if (
+    teams.length < 2 &&
+    game.season_id != null &&
+    scopes.scorekeeper.seasonIds.has(game.season_id)
+  )
+    return teams
   return teams.filter(teamId => canCoach(scopes, teamId))
 }
 
