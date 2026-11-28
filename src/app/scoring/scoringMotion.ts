@@ -186,6 +186,7 @@ export function scoringFieldPlayers(
     | 'pendingPlay'
     | 'motions'
     | 'runnerAction'
+    | 'runnerChain'
   >,
   previous: FieldPlayer[] = []
 ): FieldPlayer[] {
@@ -371,6 +372,24 @@ export function scoringFieldPlayers(
       }
     }
   }
+  // A pushed runner stands where the drag pushed him until he answers Back,
+  // and so does the dragged runner once he has answered.
+  if (state.runnerChain != null)
+    for (const runner of [
+      ...(state.runnerChain.dragged?.decision == null
+        ? []
+        : [state.runnerChain.dragged]),
+      ...state.runnerChain.pushed
+    ]) {
+      const player = players.find(
+        item => item.playerId === runner.playerId && item.team === 'runner'
+      )
+      if (player == null || player.motion != null) continue
+      const base = runner.decision === 'back' ? runner.from : runner.to
+      player.runnerBase = base
+      player.position = { ...BASES[base % 4] }
+      player.target = { ...player.position }
+    }
   if (state.presentation?.kind === 'hit' && state.presentation.out) {
     const batter = addRunner(state.presentation.batter)
     batter.batting = false

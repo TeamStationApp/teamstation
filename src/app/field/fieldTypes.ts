@@ -18,6 +18,7 @@ export interface FieldInteractionPolicy {
    * `runnerIds` are retreat-only (homeDecision trailer on the offered base).
    */
   advanceIds?: readonly string[]
+  chainIds?: readonly string[] // runners whose forward drag pushes those ahead
   gestures: ReadonlyArray<'place' | 'trajectory'>
 }
 export interface FieldPlacement {

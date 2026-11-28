@@ -9172,6 +9172,116 @@
       "file": "e2e/tests/scoring/offline/eligible.e2e.ts"
     },
     {
+      "id": "scoring/runners/chain-advance#bases-loaded-back",
+      "title": "A runner dragged toward an occupied base pushes the runners in the way, who each answer Safe, Out or Back",
+      "covers": [
+        "src/app/scoring/runnerChain.ts",
+        "src/app/scoring/runnerDrag.ts",
+        "src/app/field/FieldScene.tsx",
+        "src/app/scoring/RunnerControls.tsx",
+        "src/app/scoring/runnerControlLayout.ts",
+        "src/app/scoring/scoringFlow.ts",
+        "src/app/scoring/scoringMachine.ts",
+        "src/app/scoring/scoringMotion.ts",
+        "src/app/scoring/ScoringScreen.tsx"
+      ],
+      "minutes": 10,
+      "faults": [
+        "api-500",
+        "hidden-element"
+      ],
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "guards": [],
+      "manual": false,
+      "spec": "scoring/runners/chain-advance",
+      "file": "e2e/tests/scoring/runners/chain-advance.e2e.ts"
+    },
+    {
+      "id": "scoring/runners/chain-advance#double-steal",
+      "title": "A runner dragged toward an occupied base pushes the runners in the way, who each answer Safe, Out or Back",
+      "covers": [
+        "src/app/scoring/runnerChain.ts",
+        "src/app/scoring/runnerDrag.ts",
+        "src/app/field/FieldScene.tsx",
+        "src/app/scoring/RunnerControls.tsx",
+        "src/app/scoring/runnerControlLayout.ts",
+        "src/app/scoring/scoringFlow.ts",
+        "src/app/scoring/scoringMachine.ts",
+        "src/app/scoring/scoringMotion.ts",
+        "src/app/scoring/ScoringScreen.tsx"
+      ],
+      "minutes": 10,
+      "faults": [
+        "api-500",
+        "hidden-element"
+      ],
+      "kind": "e2e",
+      "stack": "isolated",
+      "fixtures": [
+        "coach-game"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        },
+        "ios-app": {
+          "devices": [
+            {
+              "role": "device",
+              "needs": [
+                "ios"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "guards": [],
+      "manual": false,
+      "spec": "scoring/runners/chain-advance",
+      "file": "e2e/tests/scoring/runners/chain-advance.e2e.ts"
+    },
+    {
       "id": "scoring/runners/correction-window#five-seconds",
       "title": "The runner window after a play lasts five seconds, then the next batter is up",
       "covers": [

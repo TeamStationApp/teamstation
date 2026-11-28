@@ -2,7 +2,12 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { BASES } from '../field/fieldModel'
-import { runnerDragView, runnerTargetAt, runnerTargets } from './runnerDrag'
+import {
+  chainPush,
+  runnerDragView,
+  runnerTargetAt,
+  runnerTargets
+} from './runnerDrag'
 describe('constrained runner drag geometry', function () {
   for (const from of [0, 1, 2, 3])
     it(`constrains base ${from} to one segment and switches only past halfway`, function () {
@@ -116,4 +121,51 @@ describe('base-specific Safe and Out placement', function () {
       expect(small.out.y + small.out.height).at.most(292 - 128)
       expect(small.out.x + small.out.width).at.most(312)
     })
+  it('pushes the runners in the way by the dragged runner’s progress (U2)', function () {
+    const along = (base: number, share: number): { x: number; z: number } => ({
+      x: BASES[base].x + (BASES[(base + 1) % 4].x - BASES[base].x) * share,
+      z: BASES[base].z + (BASES[(base + 1) % 4].z - BASES[base].z) * share
+    })
+    const check = (
+      pushed: ReturnType<typeof chainPush>,
+      expected: Array<[number, number]>
+    ): void => {
+      expect(pushed.map(item => item.base)).deep.equals(
+        expected.map(([base]) => base)
+      )
+      pushed.forEach((item, index) => {
+        const point = along(expected[index][0], expected[index][1])
+        expect(item.point.x).closeTo(point.x, 1e-10)
+        expect(item.point.z).closeTo(point.z, 1e-10)
+      })
+    }
+    // 1st and 2nd: the runner on 2nd goes as far toward 3rd.
+    check(chainPush(1, 0.5, [true, true, false]), [[2, 0.5]])
+    // 1st and 3rd: nobody is in the way.
+    check(chainPush(1, 0.5, [true, false, true]), [])
+    // Bases loaded: 2nd toward 3rd and 3rd toward home.
+    check(chainPush(1, 0.3, [true, true, true]), [
+      [2, 0.3],
+      [3, 0.3]
+    ])
+    check(chainPush(1, 0, [true, true, true]), [
+      [2, 0],
+      [3, 0]
+    ])
+    check(chainPush(1, 1, [true, true, false]), [[2, 1]])
+    check(chainPush(2, 2, [false, true, true]), [[3, 1]])
+    check(chainPush(1, -1, [true, true, false]), [[2, 0]])
+    check(chainPush(0, 0.5, [true, true, true]), [])
+    check(chainPush(3, 0.5, [true, true, true]), [])
+    // A pointer two bases on still reports one base.
+    const view = runnerDragView(
+      'runner',
+      1,
+      { ...BASES[3] },
+      () => ({ x: 200, y: 300 }),
+      390,
+      700
+    )
+    expect(view.to).equals(2)
+  })
 })

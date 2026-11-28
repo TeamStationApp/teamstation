@@ -17,6 +17,8 @@ export function fieldStageInstruction(state: ScoringState): string | undefined {
     return 'Drag up and down for ball trajectory.'
   if (state.phase === 'fieldersChoice')
     return 'Mark each runner Safe or Out in play order.'
+  if (state.phase === 'chainDecision')
+    return 'Mark each pushed runner Safe, Out or Back.'
   if (state.phase === 'chooseDefender') {
     if (state.runnerAction?.purpose === 'fieldersChoice')
       return 'Tap or drag each defender who handled the ball, then hit Done to mark the runners.'

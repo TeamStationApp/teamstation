@@ -141,4 +141,24 @@ describe('runner-relative decision placement', function () {
         }
       }
   })
+  it('sizes and clamps a three-button Safe, Out and Back frame as one', function () {
+    const second = choiceDecisionFrame(projection, 2, 0, 1, 3)
+    expect(second.width).equals(68 * 3 + 16)
+    expect(second.left + second.width / 2).equals(600)
+    const third = choiceDecisionFrame(projection, 3, 0, 1, 3)
+    expect(third.width).equals(68)
+    expect(third.left + third.width).lessThan(300)
+    const home = choiceDecisionFrame(projection, 4, 0, 1, 3)
+    expect(home).deep.equals(homeDecisionFrame(projection, null, true))
+    // A narrow field keeps the whole column and row on screen.
+    const narrow: BaseProjection = { ...projection, width: 240, height: 320 }
+    for (const to of [1, 2, 3, 4]) {
+      const frame = choiceDecisionFrame(narrow, to, 0, 1, 3)
+      const tall = to % 4 === 2 ? 44 : 44 * 3 + 16
+      expect(frame.left).gte(8)
+      expect(frame.left + frame.width).lte(narrow.width - 8 + 1e-9)
+      expect(frame.top).gte(8)
+      expect(frame.top + (to === 4 ? 0 : tall)).lte(narrow.height - 8 + 1e-9)
+    }
+  })
 })

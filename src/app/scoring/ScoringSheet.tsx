@@ -41,9 +41,12 @@ export function ScoringButton({
   decision = false,
   menuText = false,
   shape,
-  submenu = false
+  submenu = false,
+  hint
 }: {
   label: string
+  /** Read after the label: why a disabled button is disabled, say. */
+  hint?: string
   text?: string
   secondaryLabel?: string
   onPress: () => void
@@ -62,6 +65,7 @@ export function ScoringButton({
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={label}
+      accessibilityHint={hint}
       disabled={disabled}
       onHoverIn={() => {
         setActive(true)
