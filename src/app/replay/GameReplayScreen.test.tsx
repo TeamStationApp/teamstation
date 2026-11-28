@@ -449,6 +449,17 @@ describe('the replay screen', function () {
     container?.remove()
     container = undefined
     root = undefined
+    // Give the window back its own size, which `resize` replaced: a suite
+    // run after this one in the same bundle reads it.
+    const html = document.documentElement
+    if (
+      Object.hasOwn(html, 'clientWidth') ||
+      Object.hasOwn(html, 'clientHeight')
+    ) {
+      Reflect.deleteProperty(html, 'clientWidth')
+      Reflect.deleteProperty(html, 'clientHeight')
+      window.dispatchEvent(new window.Event('resize'))
+    }
   })
 
   it('lays the box score below the field on a tall window and beside it on a wide one', function () {
