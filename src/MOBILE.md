@@ -431,11 +431,22 @@ and is what stops the picture riding out over the stream panel.
 which refracts and highlights what passes beneath it; earlier versions draw
 `systemThinMaterial`, which is what the CSS `backdrop-filter` was imitating.
 
-No tint crosses the bridge: the effect adapts to what is behind it, and a tint
-on top reads as coloured plastic. Where somebody has asked for less
-transparency the JavaScript draws a filled view and never mounts the glass —
-the same branch a browser without `backdrop-filter` takes, and what Android
-gets too.
+No tint crosses the bridge by default: the effect adapts to what is behind
+it, and a tint on top reads as coloured plastic. Where somebody has asked for
+less transparency the JavaScript draws a filled view and never mounts the
+glass — the same branch a browser without `backdrop-filter` takes, and what
+Android gets too.
+
+The one tinted glass is the glass tab strip's pill (`GlassTabs`, which every
+`PillTabs` strip draws): `GlassView`'s `tint` (`#RRGGBB` or `#RRGGBBAA`, iOS
+only) crosses as a hex string in `glassTint` and becomes the
+`UIGlassEffect`'s own `tintColor`, so it is still glass — the strip's green at
+55% at rest, 20% while the pill travels or is held. A change of tint on screen
+is animated. A `TSGlassView` that is first laid out with no size (the pill
+before its tabs are measured) applies its effect again the first time it gets
+one, since iOS 26's glass set on an empty view never draws. Before iOS 26 the
+tint is a wash at 70% over the blur. Android and the web ignore `tint` and
+draw the filled green pill.
 
 ## Fonts
 

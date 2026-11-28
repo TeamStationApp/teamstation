@@ -91,13 +91,16 @@ const tabNames = (): string[] =>
       '[aria-label="Player sections"] [role="tab"]'
     )
   ].map(node => node.textContent ?? '')
-/** Each tab pill's side padding, which a strip of five draws narrower. */
+/**
+ * Each tab's label box, the pill's height, which a strip of five keeps: a
+ * dense strip narrows its gaps, never the pill around a label.
+ */
 const tabSides = (): string[] =>
   [
     ...document.querySelectorAll<HTMLElement>(
-      '[aria-label="Player sections"] [role="tab"] > div'
+      '[aria-label="Player sections"] [data-testid="glass-tab-label"]'
     )
-  ].map(node => getComputedStyle(node).paddingLeft)
+  ].map(node => getComputedStyle(node).height)
 const px = (rem: number): string => `${tsBallpark.rem(rem)}px`
 /**
  * Which tab's content is on the screen. PillTabs says which is selected only
@@ -335,7 +338,7 @@ describe('a player’s tabs', function () {
     )
     expect(tabNames()).deep.equals(['Videos', 'Stats', 'Walk-up', 'Teams'])
     // Dense strips keep the same clearance and scroll when necessary.
-    expect(tabSides()).deep.equals(Array(4).fill(px(1.125)))
+    expect(tabSides()).deep.equals(Array(4).fill(px(2.25)))
   })
 
   it('offers Teams to anybody, and Settings and Walk-up to nobody else', async function () {
@@ -374,7 +377,7 @@ describe('a player’s tabs', function () {
       />
     )
     expect(tabNames()).deep.equals(['Videos', 'Stats', 'Teams'])
-    expect(tabSides()).deep.equals(Array(3).fill(px(1.125)))
+    expect(tabSides()).deep.equals(Array(3).fill(px(2.25)))
     await act(async () => {
       root?.unmount()
     })

@@ -1,7 +1,6 @@
 import React from 'react'
 import {
   Pressable,
-  ScrollView,
   type StyleProp,
   Text,
   View,
@@ -10,7 +9,6 @@ import {
 
 import { pillPadding } from '../theme/pill'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { useContentInset } from './contentInset'
 import { GlassTabs } from './GlassTabs'
 
 export interface PillTab<Id extends string = string> {
@@ -28,15 +26,14 @@ export interface PillTabsProps<Id extends string = string> {
   selected: Id
   onSelect: (id: Id) => void
   /**
-   * `compact` is the size, everywhere. It does **not** shrink the target: the
-   * pressable keeps its 48px height and the pill is drawn inside it.
-   *
-   * `regular` is kept only so the difference has a name; nothing uses it.
+   * `compact` is the size, everywhere: a 36px pill in a 48px target, so the
+   * target does **not** shrink with the pill. `regular` draws the same; it is
+   * kept only so the difference has a name, and nothing uses it.
    *
    * `small` is the Yes / Maybe / No capsule's size, for the filter rows
    * stacked under a screen's tabs: a 32px pill in a 44px target, Apple's
-   * minimum, with 4px of the target on each side and no gap between pills,
-   * so each target reaches the midpoint to the next.
+   * minimum, with 4px of the target past the pill on each side and no gap
+   * between targets, so each target reaches the midpoint to the next.
    */
   size?: 'regular' | 'compact' | 'small'
   accessibilityLabel?: string
@@ -61,22 +58,18 @@ export interface PillTabsProps<Id extends string = string> {
    * its pills' width in a row beside something else.
    */
   style?: StyleProp<ViewStyle>
-  /**
-   * `glass`: bare labels and one pill that slides to the selected one
-   * (`GlassTabs`). Work in progress, on the schedule and event screens.
-   */
-  // eslint-disable-next-line react/no-unused-prop-types -- read as props.variant
-  variant?: 'pills' | 'glass'
 }
 
 /**
- * The pill tab strip.
+ * The pill tab strip: the glass tab strip (`GlassTabs`), bare labels and one
+ * pill that slides to the selected tab — Liquid Glass tinted the strip's green
+ * on iOS, the filled green pill elsewhere.
  *
  * The designs used this shape in four places and drew it four ways — a filled
  * dark pill on the team hub, an underline on the league hub, a bordered chip
  * for schedule filters, a segmented control on the game screen. Paul asked for
- * one of them, used everywhere, so this is it: the team hub's, because that is
- * the screen the palette came from.
+ * one of them, used everywhere, so this is it, on every strip, pinned or not.
+ * `PillButton` keeps the filled pill for an action that stands alone.
  *
  * It scrolls sideways rather than wrapping or shrinking. Four tabs fit a phone;
  * a fifth would either wrap to a second line that looks like a mistake, or
@@ -95,78 +88,7 @@ export interface PillTabsProps<Id extends string = string> {
 export function PillTabs<Id extends string = string>(
   props: PillTabsProps<Id>
 ): React.ReactElement {
-  if (props.variant === 'glass') return <GlassTabs {...props} />
-  return <PillStrip {...props} />
-}
-
-function PillStrip<Id extends string = string>(
-  props: PillTabsProps<Id>
-): React.ReactElement {
-  const {
-    tabs,
-    selected,
-    onSelect,
-    size = 'compact',
-    bleed = true,
-    dense = false,
-    stacked = false
-  } = props
-  const theme = useTheme()
-  const styles = getStyles(theme)
-  const inset = useContentInset()
-  // Drawn into the column's padding, the strip reaches the screen's edges and
-  // a swiped pill goes all the way out; padded by the same amount inside, its
-  // first pill still starts on the margin with everything else.
-  const reach =
-    bleed && (inset.left > 0 || inset.right > 0)
-      ? {
-          strip: { marginLeft: -inset.left, marginRight: -inset.right },
-          content: { paddingLeft: inset.left, paddingRight: inset.right }
-        }
-      : undefined
-
-  const row = (
-    <View
-      style={[
-        styles.row,
-        dense && styles.rowDense,
-        size === 'small' && styles.rowSmall
-      ]}
-    >
-      {tabs.map(tab => (
-        <PillButton
-          key={tab.id}
-          label={tab.label}
-          badge={tab.badge}
-          live={tab.live}
-          role={tab.role ?? 'tab'}
-          selected={tab.id === selected}
-          size={size}
-          dense={dense}
-          onPress={() => {
-            onSelect(tab.id)
-          }}
-        />
-      ))}
-    </View>
-  )
-
-  return (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      accessibilityRole="tablist"
-      accessibilityLabel={props.accessibilityLabel}
-      style={[reach?.strip, props.style]}
-      contentContainerStyle={[
-        styles.scrollContent,
-        stacked && styles.scrollStacked,
-        reach?.content
-      ]}
-    >
-      {row}
-    </ScrollView>
-  )
+  return <GlassTabs {...props} />
 }
 
 export interface PillFaceProps {
@@ -310,30 +232,6 @@ const getStyles = cacheStyles((theme: Theme) => ({
     height: theme.rem(0.5),
     borderRadius: theme.rem(0.25),
     backgroundColor: theme.liveColor
-  },
-  scrollContent: {
-    paddingHorizontal: theme.rem(theme.spaceXsRem),
-    // Room for the shadow. Without it the strip's own overflow cuts the lift
-    // off square, which looks like a rendering fault rather than a shadow.
-    paddingVertical: theme.rem(theme.spaceXsRem)
-  },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: theme.rem(theme.spaceSmRem)
-  },
-  rowDense: {
-    gap: theme.rem(theme.spaceXsRem)
-  },
-  // Small pills carry their spacing in their targets: no gap, so a tap
-  // between two pills lands on the nearer one. The row is pulled out by a
-  // target's side, so the first pill, not its target, starts on the margin.
-  rowSmall: {
-    gap: 0,
-    marginHorizontal: theme.rem(-0.25)
-  },
-  scrollStacked: {
-    paddingVertical: 0
   },
   // What the finger gets: 48 tall, which the spec asks for so a tab can be hit
   // one-handed while somebody is also holding a scorebook. It is transparent —

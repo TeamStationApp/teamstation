@@ -140,4 +140,30 @@ describe('GlassView native subtle blur', () => {
     ).includes({ glassSubtleBlur: false })
     expect(Glass({ opaque: true, subtleBlur: true }).type).equals('native-view')
   })
+  it('tints the glass on iOS only, and nowhere else', () => {
+    const tint = '#2B42218C'
+    const ios = nativeGlass('ios')
+    const tinted = (
+      ios({ tint, interactive: true }).props as {
+        children: React.ReactElement[]
+      }
+    ).children[0]
+    expect(tinted.type).equals('TSGlassView')
+    expect(tinted.props).includes({ glassTint: tint, glassInteractive: true })
+    const plain = (ios({}).props as { children: React.ReactElement[] })
+      .children[0]
+    expect((plain.props as { glassTint?: string }).glassTint).equals(undefined)
+    // Android draws its fill, blurred or not, and the web its View: neither
+    // takes a tint, and neither passes one on.
+    for (const [platform, androidBlur] of [
+      ['android', false],
+      ['android', true],
+      ['web', false]
+    ] as const) {
+      const Glass = nativeGlass(platform)
+      const drawn = JSON.stringify(Glass({ tint, androidBlur }))
+      expect(drawn, `${platform} ${androidBlur}`).not.includes(tint)
+      expect(drawn).equals(JSON.stringify(Glass({ androidBlur })))
+    }
+  })
 })

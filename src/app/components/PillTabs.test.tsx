@@ -124,13 +124,13 @@ describe('PillTabs', function () {
         />
       )
       const { content } = strip(container)
-      const row = content.firstElementChild as HTMLElement
-      const pill = row.querySelector<HTMLElement>('[role="tab"] > div')!
-      const style = getComputedStyle(pill)
+      const target = content.querySelector<HTMLElement>('[role="tab"]')!
+      const label = target.querySelector<HTMLElement>(
+        '[data-testid="glass-tab-label"]'
+      )!
       const drawn = [
-        style.paddingLeft,
-        style.minHeight,
-        getComputedStyle(row).gap
+        getComputedStyle(target).paddingLeft,
+        getComputedStyle(label).height
       ]
       await act(async () => {
         root?.unmount()
@@ -140,16 +140,10 @@ describe('PillTabs', function () {
       return drawn
     }
     const rem = (value: number): string => `${tsBallpark.rem(value)}px`
-    expect(await sides(false)).deep.equals([
-      rem(1.125),
-      rem(2.25),
-      rem(tsBallpark.spaceSmRem)
-    ])
-    expect(await sides(true)).deep.equals([
-      rem(1.125),
-      rem(2.25),
-      rem(tsBallpark.spaceXsRem)
-    ])
+    // Half the 28 points between two labels, or 24 dense; the pill's own
+    // height around each label either way.
+    expect(await sides(false)).deep.equals([rem(0.875), rem(2.25)])
+    expect(await sides(true)).deep.equals([rem(0.75), rem(2.25)])
   })
 
   it('draws small strips as the RSVP capsule, stacked with no gaps', async function () {
@@ -169,12 +163,17 @@ describe('PillTabs', function () {
       const { content } = strip(container)
       const row = content.firstElementChild as HTMLElement
       const target = row.querySelector<HTMLElement>('[role="tab"]')!
-      const pill = target.firstElementChild as HTMLElement
-      const label = pill.querySelector<HTMLElement>('div[dir], span, div')!
+      const box = target.querySelector<HTMLElement>(
+        '[data-testid="glass-tab-label"]'
+      )!
+      const label = box.querySelector<HTMLElement>('div[dir]')!
+      const pill = row.querySelector<HTMLElement>(
+        '[data-testid="glass-tab-pill"]'
+      )!
       const result = [
+        getComputedStyle(box).height,
         getComputedStyle(pill).height,
-        getComputedStyle(pill).paddingLeft,
-        getComputedStyle(target).minHeight,
+        getComputedStyle(target).paddingTop,
         getComputedStyle(target).paddingLeft,
         getComputedStyle(row).gap,
         getComputedStyle(content).paddingTop,
@@ -191,25 +190,29 @@ describe('PillTabs', function () {
     const rem = (value: number): string => `${tsBallpark.rem(value)}px`
     expect(await drawn('small', true)).deep.equals([
       '32px',
-      rem(1.125),
-      '44px',
-      '4px',
-      '0px',
+      '32px',
+      // A 44-point target: 6 above and below the 32-point pill.
+      '6px',
+      // The pill's padding and 4 more, with no gap to the next target.
+      '20px',
+      '',
       '0px',
       '12px',
-      // Pulled out by a target's side: the first pill sits on the margin.
+      // Pulled out by a target's outer edge.
       '-4px'
     ])
     // Unstacked, a small strip keeps its room above and below.
     expect((await drawn('small', false))[5]).equals(rem(tsBallpark.spaceXsRem))
-    // Compact strips are as they were.
-    expect((await drawn('compact', false))[7]).equals('0px')
-    expect((await drawn('compact', false)).slice(0, 5)).deep.equals([
+    expect(await drawn('compact', false)).deep.equals([
       rem(2.25),
-      rem(1.125),
-      '48px',
-      '0px',
-      rem(tsBallpark.spaceSmRem)
+      rem(2.25),
+      // A 48-point target around the 36-point pill.
+      '6px',
+      rem(0.875),
+      '',
+      rem(tsBallpark.spaceXsRem),
+      '14px',
+      '0px'
     ])
   })
 

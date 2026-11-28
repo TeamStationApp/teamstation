@@ -43,6 +43,61 @@ function clearsArcs(node: Element): void {
   )
 }
 
+/** A glass tab's target: its label box and the padding above and below. */
+function targetHeight(tab: HTMLElement): number {
+  const style = getComputedStyle(tab)
+  return (
+    parseFloat(style.paddingTop) +
+    parseFloat(labelBox(tab).height) +
+    parseFloat(style.paddingBottom)
+  )
+}
+function labelBox(tab: HTMLElement): CSSStyleDeclaration {
+  return getComputedStyle(
+    tab.querySelector<HTMLElement>('[data-testid="glass-tab-label"]')!
+  )
+}
+function pillHeight(container: HTMLElement): string {
+  return getComputedStyle(
+    container.querySelector<HTMLElement>('[data-testid="glass-tab-pill"]')!
+  ).height
+}
+/**
+ * Lays out the selected tab, then checks that the strip's one pill reaches
+ * past its label box by at least half the pill's height on each side.
+ */
+async function clearsPillArcs(
+  container: HTMLElement,
+  tab: HTMLElement
+): Promise<void> {
+  const width = 120
+  await act(async () => {
+    ;(
+      tab as unknown as {
+        __reactLayoutHandler: (event: {
+          nativeEvent: {
+            layout: { x: number; y: number; width: number; height: number }
+          }
+        }) => void
+      }
+    ).__reactLayoutHandler({
+      nativeEvent: { layout: { x: 0, y: 0, width, height: 48 } }
+    })
+    await new Promise(resolve => setTimeout(resolve, 50))
+  })
+  const pill = container.querySelector<HTMLElement>(
+    '[data-testid="glass-tab-pill"]'
+  )!
+  const style = getComputedStyle(tab)
+  const labelLeft = parseFloat(style.paddingLeft)
+  const labelRight = width - parseFloat(style.paddingRight)
+  const left = parseFloat(pill.style.left)
+  const right = left + parseFloat(pill.style.width)
+  const height = parseFloat(getComputedStyle(pill).height)
+  expect(labelLeft - left, 'leading glyph clearance').at.least(height / 2)
+  expect(right - labelRight, 'trailing glyph clearance').at.least(height / 2)
+}
+
 describe('pill label clearance', () => {
   for (const kind of ['edit', 'reply'] as const)
     it(`keeps the composer controls circular and its ${kind} context in a separate pill`, async () => {
@@ -224,9 +279,10 @@ describe('pill label clearance', () => {
           ...container.querySelectorAll<HTMLElement>('[role="tab"]')
         ]
         for (const tab of tabs) {
-          expect(parseFloat(getComputedStyle(tab).minHeight)).at.least(48)
-          clearsArcs(tab.firstElementChild!)
+          expect(targetHeight(tab)).at.least(48)
+          expect(labelBox(tab).height).equals(pillHeight(container))
         }
+        await clearsPillArcs(container, tabs[0])
         await act(async () => {
           tabs[1].click()
         })
@@ -249,12 +305,16 @@ describe('pill label clearance', () => {
       />
     )
     const tabs = [...container.querySelectorAll<HTMLElement>('[role="tab"]')]
+    const pad = pillPadding(32)
     for (const tab of tabs) {
-      expect(parseFloat(getComputedStyle(tab).minHeight)).equals(44)
-      expect(getComputedStyle(tab).paddingLeft).equals('4px')
-      expect(getComputedStyle(tab).paddingRight).equals('4px')
-      clearsArcs(tab.firstElementChild!)
+      expect(targetHeight(tab)).equals(44)
+      expect(labelBox(tab).height).equals('32px')
+      // The pill's padding, then 4 of target past the pill on either side.
+      expect(getComputedStyle(tab).paddingLeft).equals(`${pad + 4}px`)
+      expect(getComputedStyle(tab).paddingRight).equals(`${pad + 4}px`)
     }
+    expect(['', '0px']).includes(getComputedStyle(tabs[0].parentElement!).gap)
+    await clearsPillArcs(container, tabs[0])
     await act(async () => {
       tabs[1].click()
     })

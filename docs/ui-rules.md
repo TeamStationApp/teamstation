@@ -36,6 +36,15 @@ Pills (`SegmentedPill`, `PillTabs`) are for two to four mutually exclusive
 choices that sit on a single line and never wrap, such as the event type
 (Game, Practice, Other) or a screen's tabs.
 
+Every `PillTabs` strip is the glass tab strip: bare labels and one pill that
+slides to the selected tab and takes its width. On iOS the pill is
+interactive Liquid Glass tinted the strip's green, lifting while it travels or
+is held; elsewhere it is the filled green pill. The pill keeps its label
+between its two rounded ends (`pillPadding`, half its height), and each label
+is centred in a box the pill's height, so selecting a tab never moves its
+neighbours. A pill that stands alone as an action is a `PillButton`, which
+stays the filled pill.
+
 ### A long or searchable picker is a scene of its own
 
 When a picker needs a search field, or holds more than a screenful of rows,

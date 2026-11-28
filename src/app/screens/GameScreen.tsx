@@ -2310,7 +2310,6 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         selectSection(next)
       }}
       size="compact"
-      variant="glass"
       accessibilityLabel="Game sections"
     />
   )
