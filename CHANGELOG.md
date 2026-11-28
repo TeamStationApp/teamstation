@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- added: Create Game can leave a team as TBD: the game is scheduled with TBD on that side, and the team is chosen later in Game Settings.
 - added: The phone tab bar supports dragging between labelled destinations and compacts as you scroll. On iOS 26 and later it uses native Liquid Glass in TeamStation’s theme. Reduced transparency gives the bar an opaque background
 - added: Scorers can end a live game during any play, see what will go in the scorebook, and undo the final after reopening the game
 - added: TS Director can show the selected game’s scoreboard in any camera window while the primary output stays on a camera

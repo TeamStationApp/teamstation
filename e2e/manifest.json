@@ -8775,6 +8775,174 @@
       "file": "e2e/tests/schedule/sponsors/rows.e2e.ts"
     },
     {
+      "id": "schedule/tbd-opponent/schedule-later#assign-later",
+      "title": "Create Game can leave a team as TBD, and Game Settings names it later through the usual approval",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/gameDraft.ts",
+        "src/app/screens/GameFormScreen.tsx",
+        "src/app/screens/TeamSelectorScene.tsx",
+        "src/common/gameApprovals.ts",
+        "src/common/openSides.ts",
+        "src/server/schedule/gameApprovals.ts",
+        "src/server/routes/seasons.ts",
+        "src/server/routes/teams.ts",
+        "src/server/dev/fixtures/tbdOpponent.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "tbd-opponent"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 8,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "schedule/tbd-opponent/schedule-later",
+      "file": "e2e/tests/schedule/tbd-opponent/schedule-later.e2e.ts"
+    },
+    {
+      "id": "schedule/tbd-opponent/schedule-later#before-create",
+      "title": "Create Game can leave a team as TBD, and Game Settings names it later through the usual approval",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/gameDraft.ts",
+        "src/app/screens/GameFormScreen.tsx",
+        "src/app/screens/TeamSelectorScene.tsx",
+        "src/common/gameApprovals.ts",
+        "src/common/openSides.ts",
+        "src/server/schedule/gameApprovals.ts",
+        "src/server/routes/seasons.ts",
+        "src/server/routes/teams.ts",
+        "src/server/dev/fixtures/tbdOpponent.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "tbd-opponent"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 8,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "schedule/tbd-opponent/schedule-later",
+      "file": "e2e/tests/schedule/tbd-opponent/schedule-later.e2e.ts"
+    },
+    {
+      "id": "schedule/tbd-opponent/schedule-later#season-both-open",
+      "title": "Create Game can leave a team as TBD, and Game Settings names it later through the usual approval",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/gameDraft.ts",
+        "src/app/screens/GameFormScreen.tsx",
+        "src/app/screens/TeamSelectorScene.tsx",
+        "src/common/gameApprovals.ts",
+        "src/common/openSides.ts",
+        "src/server/schedule/gameApprovals.ts",
+        "src/server/routes/seasons.ts",
+        "src/server/routes/teams.ts",
+        "src/server/dev/fixtures/tbdOpponent.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "tbd-opponent"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 8,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "schedule/tbd-opponent/schedule-later",
+      "file": "e2e/tests/schedule/tbd-opponent/schedule-later.e2e.ts"
+    },
+    {
+      "id": "schedule/tbd-opponent/schedule-later#team-page",
+      "title": "Create Game can leave a team as TBD, and Game Settings names it later through the usual approval",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/gameDraft.ts",
+        "src/app/screens/GameFormScreen.tsx",
+        "src/app/screens/TeamSelectorScene.tsx",
+        "src/common/gameApprovals.ts",
+        "src/common/openSides.ts",
+        "src/server/schedule/gameApprovals.ts",
+        "src/server/routes/seasons.ts",
+        "src/server/routes/teams.ts",
+        "src/server/dev/fixtures/tbdOpponent.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "tbd-opponent"
+      ],
+      "exclusive": false,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "sendsNoMail": true,
+      "minutes": 8,
+      "guards": [],
+      "faults": [
+        "blank-screen",
+        "hidden-element"
+      ],
+      "manual": false,
+      "spec": "schedule/tbd-opponent/schedule-later",
+      "file": "e2e/tests/schedule/tbd-opponent/schedule-later.e2e.ts"
+    },
+    {
       "id": "scoring/coach-game/assistant-coaches#assistant-opens-plan",
       "title": "A team's assistant is offered Coach on its game and reads the whole plan; a scorekeeper is not",
       "covers": [

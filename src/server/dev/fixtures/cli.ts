@@ -10,6 +10,7 @@ import { runRefreshNotices } from './refreshNotices'
 import { runSearch } from './search'
 import { runSponsors } from './sponsors'
 import { runStreaming } from './streaming'
+import { runTbdOpponent } from './tbdOpponent'
 import { runTeamWithRoster } from './teamWithRoster'
 import { runTess } from './tess'
 
@@ -34,6 +35,7 @@ export const WORLDS: Record<
   'refresh-notices': runRefreshNotices,
   search: runSearch,
   sponsors: runSponsors,
+  'tbd-opponent': runTbdOpponent,
   tess: runTess
 }
 

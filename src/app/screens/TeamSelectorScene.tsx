@@ -3,13 +3,15 @@ import { ScrollView, Text, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import { localityLabel } from '../../common/locality'
+import { OPEN_SIDE_NAME } from '../../common/openSides'
 import type { PublicGroup, SearchRow } from '../../common/publicGroups'
 import { Button, TextField } from '../components'
 import { ListRow } from '../components/ListRow'
 import { Modal } from '../components/Modal'
 import { useInsets } from '../platform/safeArea'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { PlaceholderTeamForm, type TeamChoice } from './PlaceholderTeamForm'
+import { type SideChoice, TBD } from './gameDraft'
+import { PlaceholderTeamForm } from './PlaceholderTeamForm'
 
 export interface TeamSelectorAnchor {
   teamId?: string
@@ -31,8 +33,9 @@ export function teamRowContext(row: SearchRow): string {
 
 /**
  * Choose a team for one side of a game, in a scene of its own that slides up
- * over the game: suggestions before a search, any team after one, and a
- * placeholder last. Closing it changes nothing.
+ * over the game: TBD first where the side may be left open, suggestions
+ * before a search, any team after one, and a placeholder last. Closing it
+ * changes nothing.
  */
 export function TeamSelectorScene({
   client,
@@ -42,6 +45,7 @@ export function TeamSelectorScene({
   currentId,
   custodians,
   custodianNote,
+  allowTbd = false,
   onChoose,
   onClose
 }: {
@@ -55,7 +59,9 @@ export function TeamSelectorScene({
   custodians: PublicGroup[]
   /** Said in place of the placeholder row's detail while it cannot be used. */
   custodianNote?: string
-  onChoose: (choice: TeamChoice) => void
+  /** The side may be left TBD, its team chosen later. */
+  allowTbd?: boolean
+  onChoose: (choice: SideChoice) => void
   onClose: () => void
 }): React.ReactElement {
   const theme = useTheme()
@@ -182,6 +188,18 @@ export function TeamSelectorScene({
             />
           ) : (
             <>
+              {allowTbd && (
+                <ListRow
+                  testID="team-tbd"
+                  title={OPEN_SIDE_NAME}
+                  subtitle="Choose the team later"
+                  emblemIcon="groups"
+                  disabled={choosing}
+                  onPress={() => {
+                    onChoose(TBD)
+                  }}
+                />
+              )}
               <TextField
                 label="Search all teams"
                 value={query}

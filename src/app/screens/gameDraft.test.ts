@@ -17,8 +17,13 @@ import {
   otherSide,
   replaceableSides,
   selectorAnchor,
+  sideName,
+  sideTeam,
+  sideTeamId,
   sourceTeamId,
   swapSides,
+  TBD,
+  tbdSides,
   TEAM_GAME_NOTE
 } from './gameDraft'
 import type { TeamChoice } from './PlaceholderTeamForm'
@@ -189,9 +194,11 @@ describe('game draft rules', () => {
 
   it('names the first thing stopping Save', () => {
     const empty = newGameDraft(fromSeason, { group: season, canManage: true })
-    expect(draftProblem(empty, fromSeason)).equals('Choose the home team')
+    expect(draftProblem(empty, fromSeason)).equals(
+      'Choose the home team or TBD'
+    )
     expect(draftProblem({ ...empty, home: hawks }, fromSeason)).equals(
-      'Choose the away team'
+      'Choose the away team or TBD'
     )
     expect(
       draftProblem({ ...empty, home: hawks, away: choice('hawks') }, fromSeason)
@@ -356,11 +363,237 @@ describe('game draft rules', () => {
     expect(() =>
       gameProposalFields(draft, editing, hawks, eagles, {
         ...loaded,
+        game: { ...loaded.game, seasonId: null },
         withdrawTeamIds: []
       })
     ).throws('You need administrator access to a participating team.')
+    // Withdrawing no team, the change is sent as the game's season.
+    expect(
+      gameProposalFields(draft, editing, hawks, eagles, {
+        ...loaded,
+        withdrawTeamIds: []
+      })
+    )
+      .deep.include({ sender: { kind: 'season', id: 'spring' } })
+      .and.not.have.property('initiatingTeamId')
     expect(() => gameProposalFields(draft, editing, hawks, eagles)).throws(
       'Game settings could not load.'
     )
+  })
+
+  describe('a side left TBD', () => {
+    const openAway: LoadedGame = {
+      ...loaded,
+      game: { ...loaded.game, awayTeamId: null }
+    }
+    const bothOpen: LoadedGame = {
+      ...loaded,
+      game: { ...loaded.game, homeTeamId: null, awayTeamId: null },
+      withdrawTeamIds: []
+    }
+
+    it('names a team side by its team, and TBD as TBD and as no team', () => {
+      expect(sideTeamId(hawks)).equals('hawks')
+      expect(sideTeamId(TBD)).equals(undefined)
+      expect(sideTeamId(undefined)).equals(undefined)
+      expect(sideName(hawks)).equals('Demo hawks')
+      expect(sideName(TBD)).equals('TBD')
+      expect(sideTeam(hawks)).equals(hawks)
+      expect(sideTeam(TBD)).equals(undefined)
+      expect(sideTeam(undefined)).equals(undefined)
+    })
+
+    it('may leave the opponent TBD from a team page, either side from a season page, and an open side when changing a game', () => {
+      const team = newGameDraft(fromTeam, hawks)
+      expect(tbdSides(team, fromTeam)).deep.equals(['away'])
+      expect(tbdSides(swapSides({ ...team, away: TBD }), fromTeam)).deep.equals(
+        ['home']
+      )
+      const hosted = newGameDraft(fromSeason, {
+        group: season,
+        canManage: true
+      })
+      expect(tbdSides(hosted, fromSeason)).deep.equals(['home', 'away'])
+      const edit = loadedGameDraft(loaded, hawks, eagles)
+      expect(tbdSides(edit, editing, loaded)).deep.equals([])
+      expect(tbdSides(edit, editing)).deep.equals([])
+      const open = loadedGameDraft(openAway, hawks, TBD)
+      expect(tbdSides(open, editing, openAway)).deep.equals(['away'])
+      // Swapped, the open side moves with the named team.
+      expect(tbdSides(swapSides(open), editing, openAway)).deep.equals(['home'])
+      expect(
+        tbdSides(loadedGameDraft(bothOpen, TBD, TBD), editing, bothOpen)
+      ).deep.equals(['home', 'away'])
+      const openHome: LoadedGame = {
+        ...loaded,
+        game: { ...loaded.game, homeTeamId: null }
+      }
+      expect(
+        tbdSides(loadedGameDraft(openHome, TBD, eagles), editing, openHome)
+      ).deep.equals(['home'])
+    })
+
+    it('says what an unchosen side needs, and refuses TBD where it is not allowed', () => {
+      const team = ready(newGameDraft(fromTeam, hawks))
+      expect(draftProblem(team, fromTeam, 'Demo Hawks')).equals(
+        'Choose the away team or TBD'
+      )
+      expect(draftProblem({ ...team, away: TBD }, fromTeam)).equals(undefined)
+      // The team page's own side is never TBD.
+      expect(draftProblem({ ...team, home: TBD, away: owls }, fromTeam)).equals(
+        'Choose the home team'
+      )
+      expect(
+        draftProblem({ ...team, home: TBD, away: undefined }, fromTeam)
+      ).equals('Choose the home team')
+      const hosted = newGameDraft(fromSeason, {
+        group: season,
+        canManage: true
+      })
+      expect(draftProblem({ ...hosted, home: TBD }, fromSeason)).equals(
+        'Choose the away team or TBD'
+      )
+      expect(
+        draftProblem({ ...hosted, home: TBD, away: TBD }, fromSeason)
+      ).equals(undefined)
+      expect(
+        draftProblem({ ...hosted, home: hawks, away: TBD }, fromSeason)
+      ).equals(undefined)
+      // A change keeps a named side named.
+      const edit = loadedGameDraft(loaded, hawks, eagles)
+      expect(
+        draftProblem({ ...edit, away: TBD }, editing, undefined, loaded)
+      ).equals('Choose the away team')
+      expect(
+        draftProblem({ ...edit, away: undefined }, editing, undefined, loaded)
+      ).equals('Choose the away team')
+      const open = loadedGameDraft(openAway, hawks, TBD)
+      expect(draftProblem(open, editing, undefined, openAway)).equals(undefined)
+      expect(
+        draftProblem({ ...open, away: owls }, editing, undefined, openAway)
+      ).equals(undefined)
+      expect(
+        draftProblem({ ...open, home: TBD }, editing, undefined, openAway)
+      ).equals('Choose the home team')
+      expect(
+        draftProblem({ ...open, away: undefined }, editing, undefined, openAway)
+      ).equals('Choose the away team or TBD')
+    })
+
+    it('keeps a TBD side replaceable from a team page, and never the other side’s team', () => {
+      const team = { ...newGameDraft(fromTeam, hawks), away: TBD }
+      expect(replaceableSides(team, fromTeam)).deep.equals(['away'])
+      expect(replaceableSides(swapSides(team), fromTeam)).deep.equals(['home'])
+      expect(chooseTeam(team, 'away', owls, fromTeam).away).equals(owls)
+      expect(
+        chooseTeam({ ...team, away: owls }, 'away', TBD, fromTeam).away
+      ).equals(TBD)
+      // TBD is never "the other side's team", and the source stays.
+      const hosted = newGameDraft(fromSeason, {
+        group: season,
+        canManage: true
+      })
+      const both = chooseTeam(
+        chooseTeam(hosted, 'home', TBD, fromSeason),
+        'away',
+        TBD,
+        fromSeason
+      )
+      expect([both.home, both.away]).deep.equals([TBD, TBD])
+      expect(() => chooseTeam(team, 'home', TBD, fromTeam)).throws(
+        'Demo hawks must play in this game.'
+      )
+      const swapped = swapSides({ ...hosted, home: hawks, away: TBD })
+      expect([swapped.home, swapped.away]).deep.equals([TBD, hawks])
+    })
+
+    it('suggests around the side’s own team or the source when the other side is TBD, else the season', () => {
+      const team = { ...newGameDraft(fromTeam, hawks), away: TBD }
+      expect(selectorAnchor(team, 'away', fromTeam, undefined)).deep.equals({
+        teamId: 'hawks'
+      })
+      expect(
+        selectorAnchor(swapSides(team), 'away', fromTeam, 'spring')
+      ).deep.equals({ teamId: 'hawks', seasonId: 'spring' })
+      const hosted = newGameDraft(fromSeason, {
+        group: season,
+        canManage: true
+      })
+      expect(
+        selectorAnchor({ ...hosted, home: TBD }, 'away', fromSeason, 'spring')
+      ).deep.equals({ seasonId: 'spring' })
+      const open = loadedGameDraft(openAway, hawks, TBD)
+      expect(selectorAnchor(open, 'home', editing, 'spring')).deep.equals({
+        teamId: 'hawks',
+        seasonId: 'spring'
+      })
+      expect(selectorAnchor(open, 'away', editing, null)).deep.equals({
+        teamId: 'hawks'
+      })
+      expect(
+        selectorAnchor(
+          loadedGameDraft(bothOpen, TBD, TBD),
+          'home',
+          editing,
+          'spring'
+        )
+      ).deep.equals({ seasonId: 'spring' })
+    })
+
+    it('sends TBD as null, creating and changing, and a both-open change as its season', () => {
+      const team = ready({ ...newGameDraft(fromTeam, hawks), away: TBD })
+      const created = gameProposalFields(team, fromTeam, hawks, TBD)
+      expect(created.sender).deep.equals({ kind: 'team', id: 'hawks' })
+      expect(created.initiatingTeamId).equals('hawks')
+      expect(created.game).deep.include({
+        homeTeamId: 'hawks',
+        awayTeamId: null
+      })
+      const hosted = ready({
+        ...newGameDraft(fromSeason, { group: season, canManage: true }),
+        home: TBD,
+        away: TBD
+      })
+      const both = gameProposalFields(hosted, fromSeason, TBD, TBD)
+      expect(both.sender).deep.equals({ kind: 'season', id: 'spring' })
+      expect(both.game).deep.include({
+        homeTeamId: null,
+        awayTeamId: null,
+        seasonId: 'spring'
+      })
+      const open = ready(loadedGameDraft(openAway, hawks, TBD))
+      const kept = gameProposalFields(open, editing, hawks, TBD, openAway)
+      expect(kept).deep.include({ sender: { kind: 'team', id: 'hawks' } })
+      expect(kept.game).deep.include({ homeTeamId: 'hawks', awayTeamId: null })
+      const assigned = gameProposalFields(
+        open,
+        editing,
+        hawks,
+        eagles,
+        openAway
+      )
+      expect(assigned.game).deep.include({
+        homeTeamId: 'hawks',
+        awayTeamId: 'eagles'
+      })
+      const swapped = gameProposalFields(open, editing, TBD, hawks, openAway)
+      expect(swapped.game).deep.include({
+        homeTeamId: null,
+        awayTeamId: 'hawks'
+      })
+      const seasonChange = gameProposalFields(
+        ready(loadedGameDraft(bothOpen, TBD, TBD)),
+        editing,
+        owls,
+        TBD,
+        bothOpen
+      )
+      expect(seasonChange.sender).deep.equals({ kind: 'season', id: 'spring' })
+      expect(seasonChange).not.have.property('initiatingTeamId')
+      expect(seasonChange.game).deep.include({
+        homeTeamId: 'owls',
+        awayTeamId: null
+      })
+    })
   })
 })

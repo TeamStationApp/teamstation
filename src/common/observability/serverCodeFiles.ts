@@ -100,6 +100,7 @@ export const SERVER_CODE_FILES = new Set([
   'server/dev/fixtures/search.js',
   'server/dev/fixtures/sponsors.js',
   'server/dev/fixtures/streaming.js',
+  'server/dev/fixtures/tbdOpponent.js',
   'server/dev/fixtures/teamWithRoster.js',
   'server/dev/fixtures/tess.js',
   'server/dev/importArchiveCameras.js',
