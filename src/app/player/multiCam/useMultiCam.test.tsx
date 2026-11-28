@@ -3892,6 +3892,37 @@ describe('useMultiCam landing its tiles after a viewer’s seek (U10–U17)', fu
     expect(tiles.B.paused, 'started after the fitted lead').equals(false)
   })
 
+  it('does not send again a joining tile whose footage ends where it waits, and starts it once it is ready (U16b)', async function () {
+    this.timeout(12_000)
+    let bEnd = 300
+    const { tiles } = await live({ A: () => 300, B: () => bEnd })
+    await ticks(1)
+    // B is far out, and its footage ends just past the moment: no lead.
+    tiles.A.currentTime = 151
+    tiles.B.currentTime = 148
+    bEnd = 151 + SEEKABLE_SLACK_SEC
+    // Its seek does not land when the game passes it, nor for a while.
+    tiles.B.seeking = true
+    await nextLook()
+    expect(tiles.B.paused).equals(true)
+    expect(tiles.B.currentTime).closeTo(151, 1e-9)
+
+    const sent = seeksOf(tiles.B)
+    for (const at of [151.5, 152, 152.5]) {
+      tiles.A.currentTime = at
+      bEnd = at + SEEKABLE_SLACK_SEC
+      await wait(150)
+    }
+    expect(sent, 'never sent again').deep.equals([])
+    expect(tiles.B.paused).equals(true)
+
+    // It lands: started from where it stands.
+    tiles.B.seeking = false
+    await wait(150)
+    expect(tiles.B.paused).equals(false)
+    expect(sent).deep.equals([])
+  })
+
   it('gives a join its whole lead where the tile’s seekable end has gone quiet (U16a)', async function () {
     this.timeout(8000)
     let bEnd = 300

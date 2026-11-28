@@ -1160,9 +1160,27 @@ export function useMultiCam(
         const ready = element.seeking !== true && element.readyState >= 3
         if (ready) {
           start()
-        } else if (now - there > 250) {
-          joinAhead(video, element, Math.min(lead * 2, JOIN_LEAD_SEC * 4))
+          return
         }
+        if (now - there <= 250) return
+        // Sent further only where its footage reaches further. A tile whose
+        // seekable end the lead is already up against would be sent to the
+        // same place again before its last seek had landed (a Pixel takes
+        // up to two seconds), on every poll, and never land: it waits for
+        // the seek it has and starts from there, a little behind, for the
+        // watchdog to bring back.
+        const further = Math.min(lead * 2, JOIN_LEAD_SEC * 4)
+        const nowSec = secondsAt(video, now)
+        const room =
+          nowSec == null
+            ? further
+            : joinLeadSec({
+                targetSec: nowSec,
+                leadSec: further,
+                seekableEndSec:
+                  element.seekableQuiet === true ? null : seekableEndOf(element)
+              })
+        if (room > lead) joinAhead(video, element, further)
       }, JOIN_POLL_MS)
     )
   }
