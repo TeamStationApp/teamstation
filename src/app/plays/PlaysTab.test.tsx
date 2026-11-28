@@ -4,8 +4,10 @@ import React, { act } from 'react'
 
 import { type RosterEntry, TeamStationClient } from '../../common/api'
 import { HttpError } from '../../common/errors'
+import type { GameSocket, GameSocketEvent } from '../../common/gameSocket'
 import type { StoredGame } from '../../common/scoring/session'
 import { mount, press, settle, text, unmount } from '../../test/gameFormDom'
+import { editsBetween, liveGames } from '../../test/playsLive'
 import {
   finalGame,
   importedThenScoredGame,
@@ -366,5 +368,201 @@ describe('the Plays tab stream', function () {
       'Runs: 0, Left on base: 2'
     )
     expect(summaryText({})).equals('')
+  })
+})
+
+/** A game socket the test speaks for: what it sends, every listener hears. */
+function fakeSocket(): {
+  socket: Pick<GameSocket, 'subscribe'>
+  send: (event: GameSocketEvent) => Promise<void>
+  listening: () => number
+} {
+  const listeners = new Set<(event: GameSocketEvent) => void>()
+  return {
+    socket: {
+      subscribe: (_gameId, listener) => {
+        listeners.add(listener)
+        return () => {
+          listeners.delete(listener)
+        }
+      }
+    },
+    send: async event => {
+      await act(async () => {
+        for (const listener of listeners) listener(event)
+      })
+      await settle(20)
+    },
+    listening: () => listeners.size
+  }
+}
+
+function change(data: ReturnType<typeof editsBetween>): GameSocketEvent {
+  return {
+    type: 'change',
+    gameId: 'gam_plays',
+    kind: 'playEdits',
+    at: new Date().toISOString(),
+    data
+  }
+}
+
+describe('the Plays tab stream, live', function () {
+  this.timeout(30000)
+  let games: Awaited<ReturnType<typeof liveGames>>
+  before(async () => {
+    games = await liveGames()
+  })
+  afterEach(unmount)
+
+  const liveGame = { ...game, status: 'inProgress' }
+  const shown = (): number => games.start.currentPlay!.about.atBatIndex
+  const next = (): number => games.stored.currentPlay!.about.atBatIndex
+
+  it('takes each scored change from the socket, the line changing in place and a new one added, without reading again', async () => {
+    const { client, reads } = clientFor(async () => games.start)
+    const { socket, send } = fakeSocket()
+    await mount(
+      <PlaysTab
+        client={client}
+        game={liveGame}
+        signedIn
+        onSignIn={() => undefined}
+        socket={socket}
+      />
+    )
+    expect(reads).deep.equals(['gam_plays'])
+    const before = line(shown())
+    // The at-bat in progress is open, with its one pitch, and is not a button.
+    expect(pitchesOf(shown())).length(1)
+    expect(lineButton(shown())).equals(null)
+    await send(change(editsBetween(games.start, games.pitched)))
+    expect(line(shown())).equals(before)
+    expect(pitchesOf(shown())).length(2)
+    await send(change(editsBetween(games.pitched, games.stored)))
+    expect(reads).deep.equals(['gam_plays'])
+    // Stored, it is an ordinary line, shut, and the next batter is up, open.
+    expect(line(shown())).equals(before)
+    expect(lineButton(shown())).not.equals(null)
+    expect(pitchesOf(shown())).length(0)
+    expect(lineButton(next())).equals(null)
+    expect(text()).includes('batting, ')
+    const lines = testIds('plays-line-')
+    expect(lines.at(-1)).equals(`plays-line-${next()}`)
+    // Opened by the viewer, it opens like any other.
+    await tap(shown())
+    expect(pitchesOf(shown()).length).greaterThan(1)
+  })
+
+  it('reads again on a change it cannot apply, a resync, and after a refusal is lifted', async () => {
+    const { client, reads } = clientFor(async () => games.start)
+    const { socket, send } = fakeSocket()
+    await mount(
+      <PlaysTab
+        client={client}
+        game={liveGame}
+        signedIn
+        onSignIn={() => undefined}
+        socket={socket}
+      />
+    )
+    expect(reads).length(1)
+    // Built on another digest than the one read.
+    await send(change(editsBetween(games.pitched, games.stored)))
+    expect(reads).length(2)
+    // Only that the plays changed.
+    await send(
+      change({ ...editsBetween(games.start, games.pitched), edits: null })
+    )
+    expect(reads).length(3)
+    await send({ type: 'resync', gameId: 'gam_plays' })
+    expect(reads).length(4)
+    await send({
+      type: 'error',
+      gameId: 'gam_plays',
+      code: 'internal',
+      message: 'down'
+    })
+    await send({ type: 'subscribed', gameId: 'gam_plays' })
+    expect(reads).length(5)
+    // A plain acknowledgement is nothing new.
+    await send({ type: 'subscribed', gameId: 'gam_plays' })
+    // Nor is any other kind of change.
+    await send({
+      type: 'change',
+      gameId: 'gam_plays',
+      kind: 'roster',
+      at: new Date().toISOString(),
+      data: { teamId: 'home' }
+    })
+    expect(reads).length(5)
+    expect(pitchesOf(shown())).length(1)
+  })
+
+  it('reads again once the first read lands when a change came while it was out', async () => {
+    const answers: Array<(stored: StoredGame) => void> = []
+    const { client, reads } = clientFor(
+      async () =>
+        await new Promise<StoredGame>(resolve => {
+          answers.push(resolve)
+        })
+    )
+    const { socket, send } = fakeSocket()
+    await mount(
+      <PlaysTab
+        client={client}
+        game={liveGame}
+        signedIn
+        onSignIn={() => undefined}
+        socket={socket}
+      />
+    )
+    expect(reads).length(1)
+    await send(change(editsBetween(games.start, games.pitched)))
+    expect(reads).length(1)
+    await act(async () => {
+      answers[0](games.start)
+    })
+    await settle(20)
+    expect(reads).length(2)
+    await act(async () => {
+      answers[1](games.pitched)
+    })
+    await settle(20)
+    expect(pitchesOf(shown())).length(2)
+  })
+
+  it('keeps what it shows when a read again fails, and hears nothing for a viewer who may not read', async () => {
+    let fail = false
+    const { client, reads } = clientFor(async () => {
+      if (fail) throw new HttpError('internal', 'down')
+      return games.start
+    })
+    const { socket, send, listening } = fakeSocket()
+    await mount(
+      <PlaysTab
+        client={client}
+        game={liveGame}
+        signedIn
+        onSignIn={() => undefined}
+        socket={socket}
+      />
+    )
+    fail = true
+    await send({ type: 'resync', gameId: 'gam_plays' })
+    expect(reads).length(2)
+    expect(pitchesOf(shown())).length(1)
+    expect(document.querySelector('[data-testid="plays-failed"]')).equals(null)
+    await unmount()
+    await mount(
+      <PlaysTab
+        client={client}
+        game={{ ...liveGame, nonMemberView: true }}
+        signedIn
+        onSignIn={() => undefined}
+        socket={socket}
+      />
+    )
+    expect(listening()).equals(0)
   })
 })

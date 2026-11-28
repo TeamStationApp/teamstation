@@ -67,7 +67,9 @@ function sources(dir) {
 // session's and the server's. `rosterAvailability`'s `gameRosterEntries`
 // reads a side's players back as roster rows. `readerNames`'
 // `withoutReaderNames` names a copy of a game by its players' public labels,
-// for a reader who may no longer read their full names. `importedRecord`'s
+// for a reader who may no longer read their full names, and
+// `withReaderNames` names a copy with the full names its reader may read, as
+// the Plays tab names the plays a socket edit adds. `importedRecord`'s
 // `isTurnAtBat` tells a turn at bat from a lineup change or a placeholder.
 const READ_ONLY_EXPORTS = {
   // The cache inspects a stored play and compares accepted identities; it
@@ -75,7 +77,7 @@ const READ_ONLY_EXPORTS = {
   gumbo: ['storedRecordOf', 'FINAL_INDEX'],
   scoringMutation: ['sameScoringMutation'],
   lineup: ['ordinal', 'begun', 'pitchThrown'],
-  readerNames: ['withoutReaderNames'],
+  readerNames: ['withoutReaderNames', 'withReaderNames'],
   rosterAvailability: ['gameRosterEntries'],
   lineupHistory: ['revealedSides', 'confirmedSides'],
   storedNames: ['namesIn', 'withNames'],

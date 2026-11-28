@@ -6,11 +6,18 @@ import { defineE2e } from '../../../core/spec'
 import {
   eventsReads,
   gamesOf,
+  latestShown,
   openGame,
   openPlays,
   openPlaysApp,
+  pagePosition,
   PHONE,
   type PlaysApp,
+  scoreHit,
+  screenRecorder,
+  tapControl,
+  undoName,
+  wheel,
   WIDE
 } from '../../../rigs/plays/playsApp'
 
@@ -98,6 +105,35 @@ async function finalStream(app: PlaysApp): Promise<void> {
   expect(await app.testIds(/^plays-latest$/)).deep.equals([])
 }
 
+/** How close to its end the page counts as at it. */
+const AT_END = 2
+
+/** Whether the page stands at its end, with no room kept under the stream. */
+async function atEnd(app: PlaysApp): Promise<boolean> {
+  const at = await pagePosition(app)
+  return at.y >= at.end - AT_END && at.spacer <= 1
+}
+
+/** The pitch rows of the line, how many. */
+async function pitchCount(app: PlaysApp, atBatIndex: number): Promise<number> {
+  return (await app.pitchRows(atBatIndex)).length
+}
+
+/** The scorer's Score Game screen, its pitch controls drawn. */
+async function openScoring(app: PlaysApp, gameId: string): Promise<void> {
+  await app.go(`/games/${gameId}/score`)
+  await app.until(
+    'the pitch controls',
+    async () =>
+      (await app.web.page.evaluate(
+        () => document.querySelector('[aria-label="Ball"]') != null
+      ))
+        ? true
+        : undefined,
+    90000
+  )
+}
+
 export default defineE2e({
   id: 'scoring/plays/all-plays',
   title:
@@ -121,9 +157,9 @@ export default defineE2e({
   apps: [],
   secrets: [],
   costUsd: 0,
-  minutes: 6,
+  minutes: 10,
   guards: [],
-  faults: ['api-500', 'hidden-element', 'blank-screen'],
+  faults: ['api-500', 'hidden-element', 'blank-screen', 'socket-drop'],
   manual: false,
   scenarios: {
     'phone-final': async ctx => {
@@ -333,6 +369,265 @@ export default defineE2e({
         ].join('\n')
       )
       await app.screenshot('plays-signed-out-phone.png')
+    },
+
+    'live-follow': async ctx => {
+      const world = await ctx.fixture('plays-game')
+      const games = gamesOf(world)
+      const log = ctx.artifact('plays-live-follow.log')
+      const started = Date.now()
+      writeFileSync(
+        log,
+        `$ npm run -s e2e -- run scoring/plays/all-plays#live-follow --surface web-chromium --stack "$STACK"\n`
+      )
+      const note = (line: string): void => {
+        appendFileSync(
+          log,
+          `${((Date.now() - started) / 1000).toFixed(1).padStart(6)}s  ${line}\n`
+        )
+      }
+      const scorer = await openPlaysApp(ctx, world.accounts.scorer, PHONE)
+      await openScoring(scorer, games.inProgress)
+      note('scorer: Score Game open on the game in progress')
+      const viewer = await openPlaysApp(ctx, world.accounts.member, PHONE)
+      await openGame(viewer, games.inProgress)
+      await openPlays(viewer)
+      const recorder = screenRecorder(viewer.m)
+      let recorded = false
+      try {
+        const muncy = await viewer.until('the at-bat in progress', async () => {
+          const at = await pagePosition(viewer)
+          return at.lastLine ?? undefined
+        })
+        await viewer.until('the page at its end', async () =>
+          (await atEnd(viewer)) ? true : undefined
+        )
+        await ctx.checkpoint(
+          'live-open',
+          {
+            expect: [{ text: 'batting, ' }],
+            readBack: async () => {
+              expect(await pitchCount(viewer, muncy)).equals(1)
+              expect(await latestShown(viewer)).equals(false)
+              expect(await atEnd(viewer)).equals(true)
+            }
+          },
+          viewer.m
+        )
+        note(
+          `viewer: Plays open at its end, line ${muncy} in progress with 1 pitch, no button`
+        )
+
+        /** A scorer's tap, then the viewer's line until it has `pitches`. */
+        const pitchAndSee = async (
+          control: string,
+          line: number,
+          pitches: number
+        ): Promise<number> => {
+          const tapped = Date.now()
+          await tapControl(scorer, control)
+          await viewer.until(
+            `pitch ${pitches} on the viewer's line`,
+            async () =>
+              (await pitchCount(viewer, line)) >= pitches ? true : undefined,
+            15000
+          )
+          return Date.now() - tapped
+        }
+        for (const [control, pitches] of [
+          ['Ball', 2],
+          ['Called Strike', 3]
+        ] as const) {
+          const lag = await pitchAndSee(control, muncy, pitches)
+          expect(lag, `${control} reached the viewer`).lessThan(3000)
+          await viewer.until('the page at its end', async () =>
+            (await atEnd(viewer)) ? true : undefined
+          )
+          note(
+            `scorer: ${control}; viewer: pitch ${pitches} in ${lag} ms, at the end`
+          )
+        }
+
+        await scoreHit(scorer, 'Single')
+        const next = await viewer.until('the next batter', async () => {
+          const at = await pagePosition(viewer)
+          return at.lastLine != null && at.lastLine !== muncy
+            ? at.lastLine
+            : undefined
+        })
+        await viewer.until('the page at its end', async () =>
+          (await atEnd(viewer)) ? true : undefined
+        )
+        const settled = await pagePosition(viewer)
+        await ctx.checkpoint(
+          'live-single',
+          {
+            expect: [{ text: 'singles' }],
+            readBack: async () => {
+              // Stored, Muncy's line is shut; the next batter's is last, at
+              // the bottom margin, with no room left under it.
+              expect(await pitchCount(viewer, muncy)).equals(0)
+              expect(settled.lastLine).equals(next)
+              expect(settled.spacer).lessThanOrEqual(1)
+              expect(settled.y).greaterThanOrEqual(settled.end - AT_END)
+              expect(settled.lastLineBottom!).lessThanOrEqual(PHONE.height)
+              expect(await latestShown(viewer)).equals(false)
+            }
+          },
+          viewer.m
+        )
+        note(
+          `scorer: single to center; viewer: line ${muncy} shut, line ${next} last, at the end, spacer ${settled.spacer}`
+        )
+
+        // Up two screens: the page stops following and the button fades in.
+        await wheel(viewer, 'up', 6)
+        const up = await pagePosition(viewer)
+        expect(up.end - up.y).greaterThanOrEqual(2 * up.viewport - AT_END)
+        await viewer.until('the button', async () =>
+          (await latestShown(viewer)) ? true : undefined
+        )
+        note(`viewer: scrolled up to ${up.y} of ${up.end}; the button shows`)
+        await tapControl(scorer, 'Ball')
+        await viewer.until(
+          'the pitch to the next batter',
+          async () =>
+            (await pitchCount(viewer, next)) >= 1 ? true : undefined,
+          15000
+        )
+        // The open line grew below the viewer, who stays where they were.
+        await new Promise(resolve => setTimeout(resolve, 1500))
+        const held = await pagePosition(viewer)
+        expect(Math.abs(held.y - up.y)).lessThanOrEqual(1)
+        expect(held.end).greaterThan(up.end)
+        expect(await latestShown(viewer)).equals(true)
+        note(
+          `scorer: Ball; viewer: still at ${held.y}, the end now ${held.end}`
+        )
+
+        // The button takes the viewer back down, and the page follows again.
+        await viewer.m.tapOn({ css: '[data-testid="plays-latest"]' })
+        await viewer.until('the page at its end', async () =>
+          (await atEnd(viewer)) ? true : undefined
+        )
+        await viewer.until('the button gone', async () =>
+          (await latestShown(viewer)) ? undefined : true
+        )
+        note('viewer: tapped the button; at the end, the button faded')
+        const ballsBefore = (await viewer.pitchRows(next)).length
+        await pitchAndSee('Ball', next, ballsBefore + 1)
+        await viewer.until('the page at its end', async () =>
+          (await atEnd(viewer)) ? true : undefined
+        )
+        note('scorer: Ball; viewer: followed it to the end')
+
+        // Up, then back to the end by hand: following again.
+        await wheel(viewer, 'up', 3)
+        await viewer.until('the button', async () =>
+          (await latestShown(viewer)) ? true : undefined
+        )
+        for (let turn = 0; turn < 12 && !(await atEnd(viewer)); turn++)
+          await wheel(viewer, 'down', 1)
+        expect(await atEnd(viewer)).equals(true)
+        await viewer.until('the button gone', async () =>
+          (await latestShown(viewer)) ? undefined : true
+        )
+        note(
+          'viewer: scrolled up, then back to the end by hand; the button faded'
+        )
+
+        // The single taken back and a double recorded: the same line changes.
+        for (
+          let tap = 0;
+          tap < 8 && (await undoName(scorer)) !== 'Undo Called Strike';
+          tap++
+        ) {
+          await tapControl(scorer, 'Undo*')
+          await new Promise(resolve => setTimeout(resolve, 800))
+        }
+        expect(await undoName(scorer)).equals('Undo Called Strike')
+        await scoreHit(scorer, 'Double')
+        await viewer.until(
+          'the double on the same line',
+          async () => {
+            const line = await viewer.web.page.evaluate(
+              (index: number) =>
+                String(
+                  document.querySelector(`[data-testid="plays-line-${index}"]`)
+                    ?.textContent ?? ''
+                ),
+              muncy
+            )
+            return line.includes('double') ? line : undefined
+          },
+          20000
+        )
+        expect(await viewer.text()).not.includes('singles on')
+        note(
+          `scorer: undid the single, recorded a double; viewer: line ${muncy} reads the double`
+        )
+        await new Promise(resolve => setTimeout(resolve, 1500))
+        await recorder.stop(ctx.artifact('plays-live-follow.mp4'))
+        recorded = true
+        note('recorded plays-live-follow.mp4')
+      } finally {
+        if (!recorded)
+          await recorder
+            .stop(ctx.artifact('plays-live-follow.mp4'))
+            .catch(() => undefined)
+      }
+    },
+
+    'undo-hides-pill': async ctx => {
+      const world = await ctx.fixture('plays-game')
+      const games = gamesOf(world)
+      const log = ctx.artifact('plays-pill-undo.log')
+      writeFileSync(
+        log,
+        `$ npm run -s e2e -- run scoring/plays/all-plays#undo-hides-pill --surface web-chromium --stack "$STACK"\n`
+      )
+      const scorer = await openPlaysApp(ctx, world.accounts.scorer, PHONE)
+      await openScoring(scorer, games.onePitch)
+      const viewer = await openPlaysApp(ctx, world.accounts.member, PHONE)
+      await openGame(viewer, games.onePitch)
+      await openPlays(viewer)
+      appendFileSync(
+        log,
+        `viewer on the onePitch game: pills ${(await viewer.pills()).join(', ')}; tab ${await viewer.selected()}\n`
+      )
+      await tapControl(scorer, 'Undo*')
+      await viewer.until('the pill gone', async () =>
+        (await viewer.pills()).includes('Plays') ? undefined : true
+      )
+      await ctx.checkpoint(
+        'pill-gone',
+        {
+          expect: [{ text: 'Info' }],
+          readBack: async () => {
+            expect(await viewer.pills()).not.includes('Plays')
+            await viewer.until('Info', async () =>
+              (await viewer.selected()) === 'Info' ? true : undefined
+            )
+            expect(await viewer.testIds(/^plays-/)).deep.equals([])
+            await viewer.until('the address', async () =>
+              (await viewer.address()).endsWith('?tab=info') ? true : undefined
+            )
+          }
+        },
+        viewer.m
+      )
+      appendFileSync(
+        log,
+        `scorer: Undo (the only pitch); viewer: pills ${(await viewer.pills()).join(', ')}; tab ${await viewer.selected()}; address ${(await viewer.address()).replace(games.onePitch, '<onePitch>')}\n`
+      )
+      await tapControl(scorer, 'Ball')
+      await viewer.until('the pill back', async () =>
+        (await viewer.pills()).includes('Plays') ? true : undefined
+      )
+      appendFileSync(
+        log,
+        `scorer: Ball; viewer: pills ${(await viewer.pills()).join(', ')}; tab ${await viewer.selected()}\n`
+      )
     },
 
     'tab-address': async ctx => {
