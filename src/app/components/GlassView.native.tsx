@@ -44,6 +44,7 @@ const NativeGlass =
         glassDark?: boolean
         glassBackdropBlur?: boolean
         glassSubtleBlur?: boolean
+        glassTint?: string
       }>('TSGlassView')
     : null
 const NativeBlur =
@@ -70,10 +71,20 @@ export function GlassView(props: GlassViewProps): React.ReactElement {
     backdropBlur = false,
     subtleBlur = false,
     dark = false,
+    bare = false,
+    tint,
     ...rest
   } = props
   const appTheme = useTheme()
   const theme = dark ? tsDark : appTheme
+
+  if (bare) {
+    return (
+      <View {...rest} style={style}>
+        {children}
+      </View>
+    )
+  }
 
   // Android, asked to blur: the backdrop, blurred, under the web's tint.
   if (NativeBlur != null && androidBlur && !opaque) {
@@ -126,6 +137,7 @@ export function GlassView(props: GlassViewProps): React.ReactElement {
         glassRadius={radius}
         glassBackdropBlur={backdropBlur}
         glassSubtleBlur={subtleBlur}
+        glassTint={tint}
         // The app's theme, not the phone's Dark Mode: see `TSGlassView.mm`.
         glassDark={theme.isDark}
       />

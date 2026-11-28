@@ -53,6 +53,18 @@ export interface GlassViewProps extends ViewProps {
    */
   fallbackFill?: boolean
   /**
+   * Draw no material at all, for now: another pane is drawing this one's
+   * glass. The header goes bare while a pinned pill band carries the glass
+   * from the top of the screen down past its pills, so the two read as one.
+   */
+  bare?: boolean
+  /**
+   * A colour for the glass, as `#RRGGBB` or `#RRGGBBAA`: iOS 26 tints the
+   * material itself, so it stays glass. For a control that carries the app's
+   * colour, such as the selected tab's pill. iOS only.
+   */
+  tint?: string
+  /**
    * Blur what is behind it on Android too, as the web's `backdrop-filter`
    * does, rather than drawing the filled fallback.
    *

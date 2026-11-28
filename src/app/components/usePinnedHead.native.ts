@@ -12,12 +12,14 @@ import {
   runOnJS,
   runOnUI,
   scrollTo,
+  useAnimatedReaction,
   useAnimatedRef,
   useAnimatedScrollHandler,
   useAnimatedStyle,
   useSharedValue
 } from 'react-native-reanimated'
 
+import { markPinned } from './pinnedGlass'
 import {
   anchored,
   AT_REST,
@@ -288,6 +290,21 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
       { translateY: cardOffset({ y: y.value, collapse: collapse.value }) }
     ]
   }))
+  // Whether the pills are pinned under the header, for a glass band
+  // (`pinnedGlass`): reported to React only when it changes.
+  const glassKey = useRef({}).current
+  useEffect(
+    () => () => {
+      markPinned(glassKey, false)
+    },
+    [glassKey]
+  )
+  useAnimatedReaction(
+    () => pinAt.value > 0 && Math.min(y.value, collapse.value) >= pinAt.value,
+    (now, before) => {
+      if (now !== before) runOnJS(markPinned)(glassKey, now)
+    }
+  )
   const pillStyle = useAnimatedStyle(() => ({
     transform: [
       {
@@ -533,6 +550,7 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
       cardBand: { ref: cardRef, style: cardStyle },
       pillBand: {
         style: pillStyle,
+        glassKey,
         handleLayout: (event: LayoutChangeEvent) => {
           const at = event.nativeEvent.layout.y
           measured.current.pinAt = at
@@ -579,6 +597,7 @@ export function usePinnedHead(options: PinnedHeadOptions): PinnedHead {
     [
       cardRef,
       cardStyle,
+      glassKey,
       onScroll,
       pillStyle,
       pinAt,

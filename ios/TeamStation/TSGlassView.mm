@@ -30,7 +30,25 @@
 @property (nonatomic, assign) BOOL glassDark;
 @property (nonatomic, assign) BOOL glassBackdropBlur;
 @property (nonatomic, assign) BOOL glassSubtleBlur;
+@property (nonatomic, copy) NSString *glassTint;
 @end
+
+/** `#RRGGBB` or `#RRGGBBAA`, or nil for anything else. */
+static UIColor *TSColorFromHex(NSString *hex)
+{
+  if (![hex hasPrefix:@"#"] || (hex.length != 7 && hex.length != 9)) return nil;
+  unsigned int value = 0;
+  if (![[NSScanner scannerWithString:[hex substringFromIndex:1]] scanHexInt:&value]) return nil;
+  CGFloat alpha = 1;
+  if (hex.length == 9) {
+    alpha = (value & 0xFF) / 255.0;
+    value >>= 8;
+  }
+  return [UIColor colorWithRed:((value >> 16) & 0xFF) / 255.0
+                         green:((value >> 8) & 0xFF) / 255.0
+                          blue:(value & 0xFF) / 255.0
+                         alpha:alpha];
+}
 
 @implementation TSGlassView {
   UIVisualEffectView *_effectView;
@@ -99,7 +117,7 @@
 }
 
 /**
- * No tint.
+ * No tint, unless one is asked for.
  *
  * The web app tints its glass because a CSS `backdrop-filter` is a plain blur
  * and needs help to stay legible; `UIGlassEffect` already adapts to what is
@@ -109,6 +127,11 @@
  * all, so a colour never has to cross the bridge — which is just as well,
  * since a colour crossing the legacy interop arrives as a number whose alpha
  * channel is anybody's guess.
+ *
+ * The one exception is `glassTint`, for a control that carries the app's
+ * colour — the selected tab's pill, in TeamStation green. It crosses as a hex
+ * string (`#RRGGBB` or `#RRGGBBAA`), never as a processed colour, and iOS
+ * 26's glass takes it as its own `tintColor`, so it is still glass.
  */
 - (void)applyEffect
 {
@@ -140,11 +163,24 @@
         effectWithStyle:(_glassClear ? UIGlassEffectStyleClear
                                      : UIGlassEffectStyleRegular)];
     glass.interactive = _glassInteractive;
+    UIColor *tint = TSColorFromHex(_glassTint);
+    if (tint != nil) glass.tintColor = tint;
     _effectView.effect = glass;
     return;
   }
   // What the CSS was imitating.
   _effectView.effect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterial];
+  // Before iOS 26 a tint is a translucent wash over the blur.
+  UIColor *tint = TSColorFromHex(_glassTint);
+  if (tint != nil) {
+    _effectView.backgroundColor = [tint colorWithAlphaComponent:0.7];
+  }
+}
+
+- (void)setGlassTint:(NSString *)value
+{
+  _glassTint = [value copy];
+  [self applyEffect];
 }
 
 - (void)setGlassInteractive:(BOOL)value
@@ -223,5 +259,6 @@ RCT_EXPORT_VIEW_PROPERTY(glassRadius, CGFloat)
 RCT_EXPORT_VIEW_PROPERTY(glassDark, BOOL)
 RCT_EXPORT_VIEW_PROPERTY(glassBackdropBlur, BOOL)
 RCT_EXPORT_VIEW_PROPERTY(glassSubtleBlur, BOOL)
+RCT_EXPORT_VIEW_PROPERTY(glassTint, NSString)
 
 @end

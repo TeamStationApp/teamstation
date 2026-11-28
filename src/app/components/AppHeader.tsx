@@ -199,6 +199,7 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
   return (
     <>
       <GlassView
+        bare={bandPinned}
         style={[
           styles.header,
           wide && styles.headerWide,

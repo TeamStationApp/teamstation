@@ -4,7 +4,7 @@ import Animated from 'react-native-reanimated'
 
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { useContentInset } from './contentInset'
-import { glassStyle } from './glass'
+import { GlassView } from './GlassView'
 import { useHeaderSlot } from './headerSlot'
 import { usePinned } from './pinnedGlass'
 import type { PinnedHead } from './pinnedHead'
@@ -66,15 +66,18 @@ export function PillBand(props: {
   /** Outside a column with its gaps: none of them to take back. */
   flat?: boolean
   /**
-   * Pinned, the band is glass, continuing the header's: what scrolls under
-   * the pills blurs as it does under the header. Work in progress.
+   * Pinned, the band carries the header's glass down past its pills: one
+   * pane from the top of the screen to the band's lower edge, while the
+   * header draws none of its own. What scrolls under the pills blurs exactly
+   * as it does under the header, with no seam where two panes would meet.
+   * Work in progress.
    */
   glass?: boolean
   children: React.ReactNode
 }): React.ReactElement {
   const { part, testID, flat = false, glass = false, children } = props
-  const theme = useTheme()
-  const styles = getStyles(theme)
+  const styles = getStyles(useTheme())
+  const { headerHeight } = useHeaderSlot()
   const pinned = usePinned(part.glassKey ?? NO_KEY)
   const glassy = glass && pinned && part.glassKey != null
   return (
@@ -86,7 +89,7 @@ export function PillBand(props: {
         styles.band,
         styles.pillBand,
         !flat && styles.pillBandSpacing,
-        glassy && glassStyle(theme),
+        glassy && styles.bandClear,
         part.style
       ]}
     >
@@ -95,7 +98,12 @@ export function PillBand(props: {
         iOS's glass blurs less at its very edge, and a row passing under it
         showed sharp there, just above the pinned pills.
       */}
-      {!glassy && (
+      {glassy ? (
+        <GlassView
+          pointerEvents="none"
+          style={[styles.glassPane, { top: -headerHeight }]}
+        />
+      ) : (
         <View
           pointerEvents="none"
           style={[styles.backdrop, { top: -GLASS_EDGE, height: GLASS_EDGE }]}
@@ -233,6 +241,16 @@ const getStyles = cacheStyles((theme: Theme) => ({
   pillBand: {
     zIndex: 3,
     elevation: 9
+  },
+  bandClear: {
+    backgroundColor: 'transparent'
+  },
+  // The header's glass, from the top of the screen to the band's lower edge.
+  glassPane: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0
   },
   // The header's lower line, moved down to the glass's new lower edge.
   glassEdge: {

@@ -1,6 +1,7 @@
 import React from 'react'
 import {
   type LayoutChangeEvent,
+  Platform,
   Pressable,
   ScrollView,
   Text,
@@ -13,8 +14,10 @@ import Animated, {
   withTiming
 } from 'react-native-reanimated'
 
+import { pillPadding } from '../theme/pill'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { useContentInset } from './contentInset'
+import { GlassView } from './GlassView'
 import type { PillTabsProps } from './PillTabs'
 
 /**
@@ -22,9 +25,15 @@ import type { PillTabsProps } from './PillTabs'
  * one and takes its width.
  *
  * Only the selected tab has a pill, so the labels sit as close as their own
- * targets allow rather than a pill's width and a gap apart. The pill's padding
- * clears the letters, not the pill's whole height: the letters fill the middle
- * of it, where the rounded ends are within a point of the sides.
+ * targets allow rather than a pill's width and a gap apart. The pill keeps the
+ * strip's rule that a label stays between its two rounded ends
+ * (`pillPadding`); only one side of any gap holds a pill, so that clearance
+ * still costs a single side's worth, not two and a gap.
+ *
+ * On iOS the pill is the system's Liquid Glass (`GlassView`, interactive),
+ * like the tab bar's capsule, tinted the strip's green so the selected tab
+ * still carries the app's colour. Elsewhere it is the strip's filled pill.
+ * Either way the selected label is the filled pill's label colour.
  *
  * The pill's two ends travel on different springs, the leading one quicker,
  * so it stretches toward the new tab and settles into its width. Pressing a
@@ -61,7 +70,7 @@ export function GlassTabs<Id extends string = string>(
   const frame = frames[selected]
   React.useEffect(() => {
     if (frame == null) return
-    const pad = theme.rem(PILL_PAD_REM)
+    const pad = pillPadding(theme.rem(PILL_HEIGHT_REM))
     const nextLeft = frame.x + TARGET_SIDE(theme) - pad
     const nextRight = frame.x + frame.width - TARGET_SIDE(theme) + pad
     if (!placed.current) {
@@ -110,8 +119,17 @@ export function GlassTabs<Id extends string = string>(
         <Animated.View
           pointerEvents="none"
           testID="glass-tab-pill"
-          style={[styles.pill, pillStyle]}
-        />
+          style={[styles.pill, !GLASS_PILL && styles.pillFilled, pillStyle]}
+        >
+          {GLASS_PILL && (
+            <GlassView
+              interactive
+              tint={theme.pillActiveBackground}
+              radius={theme.rem(PILL_HEIGHT_REM) / 2}
+              style={styles.pillGlass}
+            />
+          )}
+        </Animated.View>
         {tabs.map(tab => {
           const isSelected = tab.id === selected
           const role = tab.role ?? 'tab'
@@ -195,8 +213,14 @@ export function GlassTabs<Id extends string = string>(
   )
 }
 
-/** The pill's padding past the label: about a third of its height. */
-const PILL_PAD_REM = 0.75
+/** The compact pill's height: 36 points, as the strip's. */
+const PILL_HEIGHT_REM = 2.25
+
+/** Where the pill clears the 48-point target above and below. */
+const PILL_INSET_REM = (3 - PILL_HEIGHT_REM) / 2
+
+/** Liquid Glass for the pill where the system draws it. */
+const GLASS_PILL = Platform.OS === 'ios'
 
 /** Each target's side: half the 28 points between two labels. */
 function TARGET_SIDE(theme: Theme): number {
@@ -214,11 +238,13 @@ const getStyles = cacheStyles((theme: Theme) => ({
   // 48 tall, as every tab; the side is half the space to the next label, so
   // two targets meet in the middle of it.
   target: {
-    minHeight: theme.rem(3),
-    justifyContent: 'center',
+    paddingVertical: theme.rem(PILL_INSET_REM),
     paddingHorizontal: TARGET_SIDE(theme)
   },
+  // The pill's own height, with the label centred in it exactly as the
+  // filled strip centres its label: the pill is drawn over this box.
   labelBox: {
+    height: theme.rem(PILL_HEIGHT_REM),
     justifyContent: 'center'
   },
   sizer: {
@@ -234,6 +260,8 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   shown: {
     position: 'absolute',
+    top: 0,
+    bottom: 0,
     left: 0,
     right: 0,
     flexDirection: 'row',
@@ -243,9 +271,18 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   pill: {
     position: 'absolute',
-    top: theme.rem(0.375),
-    height: theme.rem(2.25),
-    borderRadius: theme.radiusPill,
+    top: theme.rem(PILL_INSET_REM),
+    height: theme.rem(PILL_HEIGHT_REM),
+    borderRadius: theme.radiusPill
+  },
+  pillGlass: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
+    right: 0
+  },
+  pillFilled: {
     backgroundColor: theme.pillActiveBackground,
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.22)',

@@ -25,6 +25,8 @@ export function GlassView(props: GlassViewProps): React.ReactElement {
     dark = false,
     backdropBlur: _backdropBlur,
     subtleBlur = false,
+    bare = false,
+    tint: _tint,
     ...rest
   } = props
   const appTheme = useTheme()
@@ -32,13 +34,13 @@ export function GlassView(props: GlassViewProps): React.ReactElement {
   // A surface that is already on glass and cannot have real glass draws
   // nothing, rather than a flat tint over the blur beneath it. Where this
   // browser *can* blur there is no fallback to skip, so nothing changes.
-  const plain = !fallbackFill && !opaque && !canBlur
+  const plain = bare || (!fallbackFill && !opaque && !canBlur)
   return (
     <View
       {...rest}
       style={[
         style,
-        subtleBlur && !opaque && canBlur
+        !bare && subtleBlur && !opaque && canBlur
           ? webStyle({
               backdropFilter: 'blur(8px)',
               WebkitBackdropFilter: 'blur(8px)'
