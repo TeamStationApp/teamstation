@@ -36,6 +36,12 @@ import { advanceReel, beginReel, ReelBuilder } from './dictatedReel'
 import { moreEligibility, moreReducer } from './moreActions'
 import { overrideActions } from './overrideModel'
 import {
+  chainAhead,
+  chainAllowed,
+  chainBackError,
+  chainRunner
+} from './runnerChain'
+import {
   accepted,
   act,
   completeDefense,
@@ -899,15 +905,22 @@ function reduce(state: ScoringState, event: ScoringEvent): ScoringState {
       [offense.first?.id, offense.second?.id, offense.third?.id].indexOf(
         event.id
       ) + 1
+    // A drag toward a base another runner holds pushes him, and the runners
+    // ahead of him, on toward the next base.
+    const pushed =
+      event.to === from + 1 && chainAllowed(state)
+        ? chainAhead(state.session, from)
+        : []
     // Unforced hit-offer undo / safe re-take: commit in one step, no Safe/Out.
     // Out on a re-take falls through so the Safe/Out strip can put him out.
     // settleRunners so homeDecision waits out the return / re-advance motion.
     if (
-      (event.to === from - 1 &&
+      pushed.length === 0 &&
+      ((event.to === from - 1 &&
         undoesHitOffer(state.session, event.id, from, event.to)) ||
-      (event.to === from + 1 &&
-        event.decision === 'safe' &&
-        completesHitOffer(state.session, event.id, from, event.to))
+        (event.to === from + 1 &&
+          event.decision === 'safe' &&
+          completesHitOffer(state.session, event.id, from, event.to)))
     ) {
       const back = event.to === from - 1
       return accepted(
@@ -925,12 +938,21 @@ function reduce(state: ScoringState, event: ScoringEvent): ScoringState {
       )
     }
     if (event.to !== from && event.to !== from + 1) return state
-    const proposed = scoringReducer(state, {
+    let proposed = scoringReducer(state, {
       type: 'RUNNER_PROPOSE',
       id: event.id,
       to: event.to
     })
     if (proposed === state) return state
+    // Opened after the draft, so cancelling the drag leaves no chain behind.
+    if (pushed.length > 0)
+      proposed = {
+        ...proposed,
+        runnerChain: {
+          dragged: { playerId: event.id, from, to: event.to },
+          pushed
+        }
+      }
     let decided = scoringReducer(proposed, {
       type: 'RUNNER_DECIDE',
       decision: event.decision
@@ -944,6 +966,7 @@ function reduce(state: ScoringState, event: ScoringEvent): ScoringState {
       ? cancelRunnerDraft(decided)
       : decided
   }
+  if (event.type === 'CHAIN_DECIDE') return chainDecide(state, event)
   const runnerResult = runnerTransition(state, event)
   if (runnerResult != null) return runnerResult
   if (event.type === 'OUTCOME')
@@ -1088,6 +1111,55 @@ function reduce(state: ScoringState, event: ScoringEvent): ScoringState {
     })
     settleRunners(next)
   })
+}
+
+/**
+ * A runner the chain pushed answers. Back is one step; Safe and Out are the
+ * hand drag's own steps for that runner, in a runner draft that Cancel
+ * leaves for the pop-ups again, and one step once finished.
+ */
+function chainDecide(
+  state: ScoringState,
+  event: Extract<ScoringEvent, { type: 'CHAIN_DECIDE' }>
+): ScoringState {
+  const runner = state.runnerChain?.pushed.find(
+    item => item.playerId === event.id
+  )
+  if (
+    state.phase !== 'chainDecision' ||
+    state.readOnly === true ||
+    event.generation !== state.generation ||
+    runner == null ||
+    runner.decision != null
+  )
+    return state
+  const name = state.session.gameData.players[event.id].fullName
+  if (event.decision === 'back')
+    return chainBackError(state, event.id) != null
+      ? state
+      : accepted(state, `Back ${name}`, next => {
+          chainRunner(next, event.id)!.decision = 'back'
+          next.phase = 'runnerMovement'
+          settleRunners(next)
+        })
+  const proposed: ScoringState = {
+    ...state,
+    phase: 'runnerDecision',
+    runnerAction: {
+      playerId: event.id,
+      from: runner.from,
+      to: runner.to,
+      origin: state.session.pending == null ? 'between' : 'current',
+      returnPhase: 'chainDecision'
+    },
+    runnerDraft: draftAt(state),
+    checkpoints: checkpointsFor(state)
+  }
+  const decided = scoringReducer(proposed, {
+    type: 'RUNNER_DECIDE',
+    decision: event.decision
+  })
+  return decided === proposed ? state : decided
 }
 
 /**

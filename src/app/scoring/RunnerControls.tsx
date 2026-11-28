@@ -7,6 +7,7 @@ import type { BaseProjection } from '../field/fieldTypes'
 import { lstrings } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
 import { ScoringDecisionSheet } from './EndGameConfirmation'
+import { chainBackError, chainDropError } from './runnerChain'
 import { choiceDecisionFrame, homeDecisionFrame } from './runnerControlLayout'
 import {
   hasCurrentRunnerPitch,
@@ -146,6 +147,83 @@ export function RunnerControls({
         })}
       </View>
     )
+  if (state.phase === 'chainDecision') {
+    // Every pushed runner still to answer, each beside the base he was
+    // pushed to, all at once.
+    const waiting =
+      state.runnerChain?.pushed.filter(runner => runner.decision == null) ?? []
+    return projection == null ? null : (
+      <View pointerEvents="box-none" style={{ position: 'absolute', inset: 0 }}>
+        {waiting.map(runner => {
+          const name = state.session.gameData.players[runner.playerId].fullName
+          const horizontal = runner.to % 4 === 2
+          const backError = chainBackError(state, runner.playerId)
+          const safeError = chainDropError(state, runner.playerId, runner.to)
+          return (
+            <View
+              key={runner.playerId}
+              accessibilityLabel={`Pushed runner decision for ${name}`}
+              style={{
+                ...choiceDecisionFrame(projection, runner.to, 0, 1, 3),
+                flexDirection: horizontal ? 'row' : 'column',
+                gap: 8
+              }}
+            >
+              {(['safe', 'out', 'back'] as const).map(decision => (
+                <View
+                  key={decision}
+                  style={horizontal ? { flex: 1 } : undefined}
+                >
+                  <ScoringButton
+                    label={`${
+                      decision === 'safe'
+                        ? 'Safe'
+                        : decision === 'out'
+                          ? 'Out'
+                          : lstrings.scoring_back
+                    } ${name}`}
+                    text={
+                      decision === 'safe'
+                        ? 'Safe'
+                        : decision === 'out'
+                          ? 'Out'
+                          : lstrings.scoring_back
+                    }
+                    hint={
+                      decision === 'back'
+                        ? backError
+                        : decision === 'safe'
+                          ? safeError
+                          : undefined
+                    }
+                    disabled={
+                      (decision === 'back' && backError != null) ||
+                      (decision === 'safe' && safeError != null)
+                    }
+                    color={
+                      decision === 'safe'
+                        ? theme.scoringSafeColor
+                        : decision === 'out'
+                          ? theme.scoringOutColor
+                          : undefined
+                    }
+                    onPress={() => {
+                      dispatch({
+                        type: 'CHAIN_DECIDE',
+                        id: runner.playerId,
+                        decision,
+                        generation: state.generation
+                      })
+                    }}
+                  />
+                </View>
+              ))}
+            </View>
+          )
+        })}
+      </View>
+    )
+  }
   if (state.phase === 'runnerErrorReuse')
     return (
       <ScoringDecisionSheet

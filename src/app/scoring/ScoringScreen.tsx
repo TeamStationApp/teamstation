@@ -144,6 +144,7 @@ import {
   type RosterMode
 } from './RosterEditor'
 import { type GameChanges, listen, useRosterLive } from './rosterLive'
+import { chainAllowed, chainDropError } from './runnerChain'
 import { RunnerControls } from './RunnerControls'
 import type { RunnerDragView } from './runnerDrag'
 import { RunnerDragTargets } from './RunnerDragTargets'
@@ -3093,7 +3094,14 @@ function ScoringPanel(props: {
     `${props.gameId}:${props.userId}`,
     dispatch
   )
-  const { phase, pendingPlay, motions, runnerAction, presentation } = state
+  const {
+    phase,
+    pendingPlay,
+    motions,
+    runnerAction,
+    runnerChain,
+    presentation
+  } = state
   const previousPlayers = useRef<FieldPlayer[]>([])
   const players = useMemo(() => {
     const next = scoringFieldPlayers(
@@ -3103,6 +3111,7 @@ function ScoringPanel(props: {
         pendingPlay,
         motions,
         runnerAction,
+        runnerChain,
         presentation
       },
       previousPlayers.current
@@ -3138,6 +3147,7 @@ function ScoringPanel(props: {
     pendingPlay,
     motions,
     runnerAction,
+    runnerChain,
     presentation
   ])
   useEffect(() => {
@@ -3195,6 +3205,7 @@ function ScoringPanel(props: {
     .sort((a, b) => b.from - a.from)[0]
   const runnerEnabled =
     state.runnerAction?.purpose !== 'droppedThirdStrike' &&
+    state.runnerChain == null &&
     ['ready', 'correctionWindow', 'resolveBatter', 'runnerDecision'].includes(
       state.phase
     ) &&
@@ -3491,6 +3502,9 @@ function ScoringPanel(props: {
             )
           )
             return undefined
+          // A base the drag's chain of runners empties is not occupied.
+          if (chainAllowed(state))
+            return chainDropError(state, player.playerId, to)
           return runnerDecisionError({
             ...state,
             runnerAction: {
@@ -3529,6 +3543,7 @@ function ScoringPanel(props: {
           runnerIds,
           retreatIds,
           advanceIds,
+          chainIds: chainAllowed(state) ? runnerIds : undefined,
           selectableIds:
             status.readOnly ||
             menu ||

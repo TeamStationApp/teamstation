@@ -13,6 +13,7 @@ import {
 } from 'three'
 
 import {
+  chainPush,
   type RunnerDragView,
   runnerDragView,
   runnerTargetAt
@@ -163,7 +164,55 @@ export function FieldScene(props: FieldSceneProps): React.ReactElement {
     view: RunnerDragView
     /** What the screen was last told of `view` (see `offered`). */
     shown?: string
+    /** The runners this drag pushes along, by field id. */
+    pushed?: string[]
   } | null>(null)
+  /**
+   * Moves the runners a chain drag pushes: each on the consecutive occupied
+   * bases ahead goes as far toward his next base as the dragged runner has
+   * come toward his. A retreat pushes nobody.
+   */
+  const pushChain = (runner: {
+    id: string
+    view: RunnerDragView
+    pushed?: string[]
+  }): void => {
+    if (props.interaction?.chainIds?.includes(runner.id) !== true) return
+    const byBase = new Map<number, FieldPlayer>()
+    for (const player of players)
+      if (
+        player.team === 'runner' &&
+        player.id !== runner.id &&
+        player.batting !== true &&
+        player.runnerBase != null &&
+        player.runnerBase >= 1 &&
+        player.runnerBase <= 3
+      )
+        byBase.set(player.runnerBase, player)
+    const pushes = chainPush(
+      runner.view.from,
+      runner.view.to < runner.view.from ? 0 : runner.view.progress,
+      [1, 2, 3].map(base => byBase.has(base))
+    )
+    for (const { base, point } of pushes) {
+      const player = byBase.get(base)!
+      player.position = { ...point }
+      player.target = { ...point }
+    }
+    runner.pushed = pushes.map(({ base }) => byBase.get(base)!.id)
+  }
+  /** Puts the runners a drag pushed back on their bases. */
+  const restoreChain = (
+    runner: { pushed?: string[] } | null,
+    list: readonly FieldPlayer[]
+  ): void => {
+    for (const id of runner?.pushed ?? []) {
+      const player = list.find(item => item.id === id)
+      if (player?.runnerBase == null) continue
+      player.position = { ...BASES[player.runnerBase % 4] }
+      player.target = { ...player.position }
+    }
+  }
   /**
    * Tells the screen the runner's Safe/Out view when what it offers changed.
    * A finger reports faster than the screen draws, and each report re-renders
@@ -254,6 +303,7 @@ export function FieldScene(props: FieldSceneProps): React.ReactElement {
     return () => {
       clearHold()
       if (runnerDrag.current != null) {
+        restoreChain(runnerDrag.current, callbacks.current.players)
         runnerDrag.current = null
         callbacks.current.onRunnerCancel?.()
         callbacks.current.onRunnerDrag?.(null)
@@ -342,6 +392,7 @@ export function FieldScene(props: FieldSceneProps): React.ReactElement {
         player.position = { ...runner.view.point }
         player.target = { ...runner.view.point }
       }
+      pushChain(runner)
       offered(runner)
     } else if (props.homeRunPlacement === true) {
       const landing = landingAt(event.ray, isTouch(event))
@@ -584,6 +635,7 @@ export function FieldScene(props: FieldSceneProps): React.ReactElement {
     clearHold()
     const runner = runnerDrag.current
     runnerDrag.current = null
+    restoreChain(runner, players)
     const player = players.find(item => item.id === drag.current?.id)
     if (player != null) {
       finishMove(player, drag.current, cancel)
@@ -645,6 +697,7 @@ export function FieldScene(props: FieldSceneProps): React.ReactElement {
       drag.current = null
       if (touch) props.onHoldClock?.(false)
       clearHold()
+      restoreChain(runnerDrag.current, players)
       runnerDrag.current = null
       props.onRunnerDrag?.(null)
       props.onRunnerCancel?.()
@@ -674,6 +727,7 @@ export function FieldScene(props: FieldSceneProps): React.ReactElement {
       setupTap.current = null
       clearHold()
       if (runnerDrag.current != null) {
+        restoreChain(runnerDrag.current, callbacks.current.players)
         runnerDrag.current = null
         callbacks.current.onRunnerCancel?.()
       }

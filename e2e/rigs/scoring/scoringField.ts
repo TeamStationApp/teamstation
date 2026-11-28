@@ -1,4 +1,5 @@
 import type { ScoringAction } from '../../../src/common/scoring/actions'
+import type { GameState } from '../../../src/common/scoring/state'
 import type { FixtureManifest } from '../../core/fixtures'
 import type { E2eContext } from '../../core/spec'
 import {
@@ -9,7 +10,7 @@ import {
   openCoachApp
 } from '../coach/coachApp'
 import { maestroDriver, placeFielder, setTrajectory } from '../fieldPointer'
-import { nativeField } from './nativeField'
+import { fieldProjection, type NativeField, nativeField } from './nativeField'
 
 /**
  * The scoring screen of the `coach-game` world on either surface, as its
@@ -54,6 +55,19 @@ export interface ScoringField {
    * trajectory accepted as shown.
    */
   hit: (outcome: 'Single' | 'Double' | 'Triple') => Promise<void>
+  /**
+   * Where the field draws now: the app's window, or the page's field canvas,
+   * projected with the screen's home view.
+   */
+  field: () => Promise<NativeField>
+  /** The labels on screen that match `pattern`, in screen order. */
+  labels: (pattern: RegExp) => Promise<string[]>
+  /** Scores `actions` on the game through the API, as another device would. */
+  seed: (
+    actions: ScoringAction[] | ((game: GameState) => ScoringAction[])
+  ) => Promise<void>
+  /** Opens the Score screen again, read from the server. */
+  reopen: () => Promise<void>
 }
 
 function matches(label: string, wanted: string | RegExp): boolean {
@@ -69,7 +83,9 @@ export async function openScoringField(
   seed: ScoringAction[]
 ): Promise<ScoringField> {
   const world = await ctx.fixture('coach-game')
-  if (seed.length > 0) {
+  const scoreSeed = async (
+    actions: ScoringAction[] | ((game: GameState) => ScoringAction[])
+  ): Promise<void> => {
     const { TeamStationClient } = await import('../../../src/common/api')
     const { signInTestAccount } =
       await import('../../../src/test/passwordFixtures')
@@ -79,19 +95,23 @@ export async function openScoringField(
       baseUrl: api,
       token: await signInTestAccount(api, world.accounts.scorekeeper)
     })
-    await scoreWith(client, world.ids.game, seed)
+    await scoreWith(client, world.ids.game, actions)
   }
+  if (seed.length > 0) await scoreSeed(seed)
   const app = await openCoachApp(ctx, 'scorekeeper', { size: PHONE_LANDSCAPE })
   const { m } = app
   const web = app.web != null
   const path = `/games/${world.ids.game}/score`
-  if (web) await m.openLink({ link: `${ctx.stack.origin}${path}` })
-  else {
-    await m.openLink({ link: `teamstation://${path}` })
-    // The system asks once before a link opens the app it names.
-    if ((await app.nodes()).some(node => labelOf(node) === 'Open'))
-      await m.tapOn({ text: 'Open' })
+  const open = async (): Promise<void> => {
+    if (web) await m.openLink({ link: `${ctx.stack.origin}${path}` })
+    else {
+      await m.openLink({ link: `teamstation://${path}` })
+      // The system asks once before a link opens the app it names.
+      if ((await app.nodes()).some(node => labelOf(node) === 'Open'))
+        await m.tapOn({ text: 'Open' })
+    }
   }
+  await open()
 
   const nodes = async (): Promise<Array<Node & { value?: string }>> =>
     web ? [] : flatten((await m.hierarchy()) as Node)
@@ -192,6 +212,28 @@ export async function openScoringField(
     const y = Math.round(centre.y + centre.height / 2)
     await m.tapOnPoint({ point: `${x},${y}` })
   }
+  const field = async (): Promise<NativeField> => {
+    if (!web) return await nativeField(m)
+    const rect = (await app.web!.page.evaluate(
+      `(() => { const r = document.querySelector('canvas').getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height } })()`
+    )) as { x: number; y: number; width: number; height: number }
+    return fieldProjection(rect)
+  }
+  const labels = async (pattern: RegExp): Promise<string[]> => {
+    if (web)
+      return (await app.web!.page.evaluate(
+        `(() => { const p = new RegExp(${JSON.stringify(pattern.source)}); return [...document.querySelectorAll('[aria-label]')].filter(n => n.getClientRects().length > 0).map(n => n.getAttribute('aria-label')).filter(l => p.test(l)) })()`
+      )) as string[]
+    return [
+      ...new Set(
+        (await nodes()).map(labelOf).filter(label => pattern.test(label))
+      )
+    ]
+  }
+  const reopen = async (): Promise<void> => {
+    await open()
+    await shown('Ball', 90000)
+  }
   await shown('Ball', 90000)
   return {
     app,
@@ -203,6 +245,10 @@ export async function openScoringField(
     showing,
     countdown,
     batter,
-    hit
+    hit,
+    field,
+    labels,
+    seed: scoreSeed,
+    reopen
   }
 }

@@ -402,4 +402,128 @@ describe('runner captured pointer decisions', function () {
       await renderer.unmount()
     }
   })
+
+  it('pushes the runners in the way during a chain drag and puts them back on cancel (U6)', async function () {
+    const players = createPlayers().slice(9, 12)
+    players.forEach((player, index) => {
+      player.position = { ...BASES[index + 1] }
+      player.target = { ...player.position }
+      player.runnerBase = index + 1
+    })
+    const [first, second, third] = players
+    let camera: Camera | undefined
+    const decisions: unknown[] = []
+    const scene = (chain: boolean): React.ReactElement =>
+      React.createElement(FieldScene, {
+        players,
+        selected: '',
+        onSelect: () => {},
+        view: 'home',
+        zoom: 1,
+        interaction: {
+          generation: 1,
+          selectableIds: players.map(player => player.id),
+          runnerIds: players.map(player => player.id),
+          ...(chain ? { chainIds: players.map(player => player.id) } : {}),
+          gestures: ['place']
+        },
+        onRunnerDrop: (...args) => {
+          decisions.push(args)
+        }
+      })
+    const renderer = await create(scene(true), {
+      width: 900,
+      height: 650,
+      onCreated: state => {
+        camera = state.camera
+      }
+    })
+    const target = { setPointerCapture() {}, releasePointerCapture() {} }
+    const eventAt = (x: number, y: number): object => {
+      const pointer = new Vector2((x / 900) * 2 - 1, 1 - (y / 650) * 2)
+      const point = new Vector3(pointer.x, pointer.y, 0.5).unproject(camera!)
+      return {
+        pointerId: 1,
+        button: 0,
+        pointer,
+        target,
+        ray: new Ray(
+          camera!.position.clone(),
+          point.sub(camera!.position).normalize()
+        )
+      }
+    }
+    const world = (x: number, y: number, z: number): object => {
+      const point = new Vector3(x, y, z).project(camera!)
+      return eventAt((point.x + 1) * 450, (1 - point.y) * 325)
+    }
+    const half = (base: number): { x: number; z: number } => ({
+      x: (BASES[base].x + BASES[(base + 1) % 4].x) / 2,
+      z: (BASES[base].z + BASES[(base + 1) % 4].z) / 2
+    })
+    try {
+      await renderer.advanceFrames(1, 1 / 60)
+      const surface = renderer.scene.findByProps({
+        name: 'interaction-surface'
+      })
+      await renderer.fireEvent(
+        surface,
+        'pointerDown',
+        world(BASES[1].x, 5, BASES[1].z)
+      )
+      const middle = half(1)
+      await renderer.fireEvent(
+        surface,
+        'pointerMove',
+        world(middle.x, 0.7, middle.z)
+      )
+      expect(second.position.x).closeTo(half(2).x, 0.5)
+      expect(second.position.z).closeTo(half(2).z, 0.5)
+      expect(third.position.x).closeTo(half(3).x, 0.5)
+      expect(third.position.z).closeTo(half(3).z, 0.5)
+      await renderer.fireEvent(
+        surface,
+        'pointerCancel',
+        world(middle.x, 0.7, middle.z)
+      )
+      for (const [index, player] of players.entries())
+        expect(player.position).deep.equals(BASES[index + 1])
+      expect(decisions).deep.equals([])
+      // Dragging the runner on 2nd pushes only 3rd; the runner behind stays.
+      await renderer.fireEvent(
+        surface,
+        'pointerDown',
+        world(BASES[2].x, 5, BASES[2].z)
+      )
+      await renderer.fireEvent(
+        surface,
+        'pointerMove',
+        world(half(2).x, 0.7, half(2).z)
+      )
+      expect(first.position).deep.equals(BASES[1])
+      expect(third.position.x).closeTo(half(3).x, 0.5)
+      await renderer.fireEvent(surface, 'lostPointerCapture', {})
+      expect(third.position).deep.equals(BASES[3])
+      // Without a chain nobody else moves.
+      await renderer.update(scene(false))
+      await renderer.fireEvent(
+        surface,
+        'pointerDown',
+        world(BASES[1].x, 5, BASES[1].z)
+      )
+      await renderer.fireEvent(
+        surface,
+        'pointerMove',
+        world(middle.x, 0.7, middle.z)
+      )
+      expect(second.position).deep.equals(BASES[2])
+      await renderer.fireEvent(
+        surface,
+        'pointerUp',
+        world(middle.x, 0.7, middle.z)
+      )
+    } finally {
+      await renderer.unmount()
+    }
+  })
 })

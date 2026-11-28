@@ -1336,6 +1336,7 @@ export const enUs = {
   scoring_tiebreaker: '(Tiebreaker)',
   scoring_out_type: 'OUT TYPE',
   scoring_submenu: 'SUB-MENU',
+  scoring_back: 'Back',
   scoring_at_home: 'At Home',
   scoring_at_first: 'At First',
   scoring_at_second: 'At Second',

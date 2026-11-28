@@ -13,8 +13,9 @@ import {
 
 import { asRosterEntry } from '../../common/api'
 import { userIdOfGumbo } from '../../common/userId'
-import { scoringRoster } from '../../test/scoringSession'
+import { scoringRoster, scoringSession } from '../../test/scoringSession'
 import { pitchingPose } from '../field/athletePose'
+import { BASES } from '../field/fieldModel'
 import { FieldScene } from '../field/FieldScene'
 import type { FieldCanvasProps } from '../field/fieldTypes'
 import { Player } from '../field/Player'
@@ -22,6 +23,9 @@ import { hasPlayerLabel, PLAYER_SCALE } from '../field/playerPresentation'
 import { createDevelopmentSession } from './developmentSession'
 import { fieldPlayersFor } from './fieldAdapter'
 import { gameFixture } from './isUnscoredGame.test'
+import { initialScoringState } from './scoringMachine'
+import { scoringFieldPlayers } from './scoringMotion'
+import { playerRef } from './scoringSelectors'
 
 const roster = [
   asRosterEntry({
@@ -351,5 +355,36 @@ describe('scoring field policy', function () {
     } finally {
       await renderer.unmount()
     }
+  })
+})
+
+describe('runners a drag pushed', function () {
+  it('draws undecided and Safe pushed runners at their target and Back runners on their own base (U6)', function () {
+    const state = initialScoringState(scoringSession(gameFixture))
+    const offense = state.session.liveData.linescore.offense
+    offense.first = playerRef(state.session, 2)
+    offense.second = playerRef(state.session, 3)
+    offense.third = playerRef(state.session, 4)
+    state.runnerChain = {
+      dragged: { playerId: 2, from: 1, to: 2 },
+      pushed: [
+        { playerId: 3, from: 2, to: 3, decision: 'back' },
+        { playerId: 4, from: 3, to: 4 }
+      ]
+    }
+    const at = (id: number): { base?: number; x: number; z: number } => {
+      const player = scoringFieldPlayers(state).find(
+        item => item.playerId === id && item.team === 'runner'
+      )!
+      return { base: player.runnerBase, ...player.position }
+    }
+    // The dragged runner stays on his base until he has answered.
+    expect(at(2)).deep.equals({ base: 1, ...BASES[1] })
+    expect(at(3)).deep.equals({ base: 2, ...BASES[2] })
+    expect(at(4)).deep.equals({ base: 4, ...BASES[0] })
+    state.runnerChain.dragged!.decision = 'safe'
+    state.runnerChain.pushed[0].decision = 'safe'
+    expect(at(2)).deep.equals({ base: 2, ...BASES[2] })
+    expect(at(3)).deep.equals({ base: 3, ...BASES[3] })
   })
 })

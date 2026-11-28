@@ -54,12 +54,17 @@ export function homeDecisionFrame(
   }
 }
 
-/** Controls stay beside their destination runner, including narrow fields. */
+/**
+ * Controls stay beside their destination runner, including narrow fields.
+ * `buttons` is how many sit in the row or column (Safe and Out, or Safe,
+ * Out and Back), which is sized and clamped as one.
+ */
 export function choiceDecisionFrame(
   projection: BaseProjection,
   to: number,
   slot = 0,
-  count = 1
+  count = 1,
+  buttons = 2
 ): DecisionFrame {
   const base = to % 4
   const point = projection.bases[base]
@@ -68,10 +73,15 @@ export function choiceDecisionFrame(
   // Multiple arrivals share a compact local column, sized as a whole so
   // clamping at the field edge cannot put one runner's Out over another Safe.
   const repeatedHome = base === 0 && count > 1
-  const width = base === 2 || repeatedHome ? ROW_WIDTH : BUTTON_WIDTH
-  const height = base === 2 || repeatedHome ? BUTTON_HEIGHT : PAIR_HEIGHT
+  const row = base === 2 || repeatedHome
+  const width = row
+    ? BUTTON_WIDTH * buttons + GAP * (buttons - 1)
+    : BUTTON_WIDTH
+  const height = row
+    ? BUTTON_HEIGHT
+    : BUTTON_HEIGHT * buttons + GAP * (buttons - 1)
   const home =
-    base === 0 ? homeDecisionFrame(projection, null, false)! : undefined
+    base === 0 ? homeDecisionFrame(projection, null, buttons > 2)! : undefined
   let left =
     home?.left ??
     (base === 2
